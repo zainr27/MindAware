@@ -96,8 +96,8 @@ function DroneStatus({ telemetry }) {
             <div style={{ fontWeight: 'bold', color: '#10b981', fontSize: '1.2rem', marginTop: '0.5rem' }}>IN THE AIR</div>
             <div style={{ fontSize: '1rem', opacity: 0.7, marginTop: '0.3rem' }}>1.0m altitude</div>
             <div style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: '0.3rem' }}>All parameters optimal</div>
-          </div>
-          
+      </div>
+
           <div style={{ 
             textAlign: 'center', 
             padding: '1.5rem',
@@ -113,7 +113,7 @@ function DroneStatus({ telemetry }) {
             <div style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: '0.3rem' }}>Regain focus to fly</div>
           </div>
         </div>
-      </div>
+        </div>
 
       {/* Current Values */}
       <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
@@ -167,7 +167,7 @@ function DroneStatus({ telemetry }) {
             🚁
           </div>
         </div>
-      </div>
+        </div>
 
       {/* Operator Feedback Note */}
       <div style={{ 
@@ -187,32 +187,32 @@ function DroneStatus({ telemetry }) {
         <div>
           <div className="indicator-label">Battery</div>
           <div className="battery-bar" style={{ height: '20px', backgroundColor: '#1f2937', borderRadius: '10px', overflow: 'hidden' }}>
-            <div
-              className="battery-fill"
-              style={{
+        <div
+          className="battery-fill"
+          style={{
                 width: `${bat}%`,
                 height: '100%',
                 backgroundColor: getBatteryColor(bat),
                 transition: 'width 0.3s ease'
-              }}
-            />
+          }}
+        />
           </div>
           <div style={{ textAlign: 'center', marginTop: '0.3rem', fontSize: '0.9rem' }}>{bat.toFixed(0)}%</div>
-        </div>
-        
+      </div>
+
         <div>
           <div className="indicator-label">Mission</div>
           <div className="mission-progress-bar" style={{ height: '20px', backgroundColor: '#1f2937', borderRadius: '10px', overflow: 'hidden' }}>
-            <div
-              className="mission-fill"
+        <div
+          className="mission-fill"
               style={{ 
                 width: `${mission}%`,
                 height: '100%',
                 backgroundColor: '#3b82f6',
                 transition: 'width 0.3s ease'
               }}
-            />
-          </div>
+        />
+      </div>
           <div style={{ textAlign: 'center', marginTop: '0.3rem', fontSize: '0.9rem' }}>{mission.toFixed(0)}%</div>
         </div>
       </div>

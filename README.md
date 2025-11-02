@@ -601,7 +601,8 @@ MindAware/
 │   │   └── websocket.py           # Real-time streaming
 │   └── sim/
 │       ├── eeg_adapter.py         # Real EEG parser/transformer
-│       └── eeg_simulator.py       # Simulated EEG generator
+│       ├── eeg_simulator.py       # Simulated EEG generator
+│       └── drone_simulator.py     # Simulated drone telemetry
 ├── ui/frontend/
 │   ├── src/
 │   │   ├── App.jsx                # Main dashboard

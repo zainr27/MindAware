@@ -17,7 +17,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.agent import CognitivePolicy, DroneTools, DecisionLogger, AgentMemory, LLMAgent
-from src.sim import EEGSimulator
+from src.sim import EEGSimulator, DroneSimulator
 from src.sim.eeg_adapter import RealEEGAdapter, get_adapter
 from src.api import setup_websocket_routes, broadcast_cognitive_state, broadcast_decision, broadcast_telemetry
 
@@ -77,9 +77,13 @@ class MindAwareAgent:
             print("[INIT] 🔴 Real EEG mode enabled - waiting for data from hardware")
             print("[INIT] Partner should POST to /eeg/ingest endpoint")
         else:
-            self.eeg_sim = EEGSimulator(scenario=scenario)
+        self.eeg_sim = EEGSimulator(scenario=scenario)
             print(f"[INIT] EEG simulator: {scenario} scenario")
         
+        # Drone simulator
+        self.drone_sim = DroneSimulator()
+        
+        print("[INIT] Drone simulator: ready")
         print("[INIT] Agent initialization complete\n")
     
     def process_cognitive_state(self, cognitive_state: dict) -> dict:
@@ -388,29 +392,31 @@ class MindAwareAgent:
                   f"Overload: {cognitive_state['overload']:.3f} | "
                   f"Stress: {cognitive_state['stress']:.3f}")
             
-            # Get drone telemetry from tools
-            status = self.tools.get_status()
-            telemetry = {
-                "altitude_m": status.get("altitude_m", 0.0),
-                "yaw_deg": status.get("yaw_deg", 0.0),
-                "rotation_deg": status.get("yaw_deg", 0.0),  # Alias for compatibility
-                "battery": 100,  # Default battery level
-                "mission_progress": 0,
-                "status": "active"
-            }
+            # Get drone telemetry
+            telemetry = self.drone_sim.get_telemetry()
             print(f"[DRONE] Altitude: {telemetry['altitude_m']:.2f}m | "
-                  f"Yaw: {telemetry['yaw_deg']:.0f}°")
+                  f"Rotation: {telemetry['rotation_deg']:.0f}° | "
+                  f"Battery: {telemetry['battery']}%")
             
-            # Process through agent (tools already update altitude internally)
+            # Process through agent
             decision = self.process_cognitive_state(cognitive_state)
+            
+            # Update drone based on actions
+            if decision['actions_taken']:
+                for action in decision['actions_taken']:
+                    # Update drone simulator to match tool actions
+                    if action['tool'] in ['takeoff', 'land']:
+                        new_altitude = action['result'].get('new_altitude_m', 0)
+                        self.drone_sim.update_altitude(new_altitude)
+                    elif action['tool'] == 'maintain_altitude':
+                        # No action needed - altitude maintained
+                        pass  # Yaw controlled by EEG
             
             # Broadcast to WebSocket (run in background)
             asyncio.run(self._broadcast_updates(cognitive_state, telemetry, decision))
             
-            # Get updated status after processing
-            updated_status = self.tools.get_status()
-            print(f"\n[STATUS] Altitude: {updated_status.get('altitude_m', 0.0):.2f}m | "
-                  f"Yaw: {updated_status.get('yaw_deg', 0.0):.0f}°")
+            print(f"\n[STATUS] Altitude: {self.drone_sim.get_altitude():.2f}m | "
+                  f"Rotation: {self.drone_sim.get_rotation():.0f}°")
             print(f"[STATUS] Memory: {len(self.memory.cognitive_history)} states, "
                   f"{len(self.memory.decision_history)} decisions")
             
@@ -465,29 +471,31 @@ class MindAwareAgent:
                 print(f"[EEG] Calibrated: {cognitive_state.get('calibrated', False)} | "
                       f"Buffer: {cognitive_state.get('buffer_size', 0)} readings")
                 
-                # Get drone telemetry from tools
-                status = self.tools.get_status()
-                telemetry = {
-                    "altitude_m": status.get("altitude_m", 0.0),
-                    "yaw_deg": status.get("yaw_deg", 0.0),
-                    "rotation_deg": status.get("yaw_deg", 0.0),  # Alias for compatibility
-                    "battery": 100,  # Default battery level
-                    "mission_progress": 0,
-                    "status": "active"
-                }
+                # Get drone telemetry
+                telemetry = self.drone_sim.get_telemetry()
                 print(f"[DRONE] Altitude: {telemetry['altitude_m']:.2f}m | "
-                      f"Yaw: {telemetry['yaw_deg']:.0f}°")
+                      f"Rotation: {telemetry['rotation_deg']:.0f}° | "
+                      f"Battery: {telemetry['battery']}%")
                 
-                # Process through agent (tools already update altitude internally)
+                # Process through agent
                 decision = self.process_cognitive_state(cognitive_state)
+                
+                # Update drone based on actions
+                if decision['actions_taken']:
+                    for action in decision['actions_taken']:
+                        # Update drone simulator to match tool actions
+                        if action['tool'] in ['takeoff', 'land']:
+                            new_altitude = action['result'].get('new_altitude_m', 0)
+                            self.drone_sim.update_altitude(new_altitude)
+                        elif action['tool'] == 'maintain_altitude':
+                            # No action needed - altitude maintained
+                            pass  # Yaw controlled by EEG
                 
                 # Broadcast to WebSocket
                 asyncio.run(self._broadcast_updates(cognitive_state, telemetry, decision))
                 
-                # Get updated status after processing
-                updated_status = self.tools.get_status()
-                print(f"\n[STATUS] Altitude: {updated_status.get('altitude_m', 0.0):.2f}m | "
-                      f"Yaw: {updated_status.get('yaw_deg', 0.0):.0f}°")
+                print(f"\n[STATUS] Altitude: {self.drone_sim.get_altitude():.2f}m | "
+                      f"Rotation: {self.drone_sim.get_rotation():.0f}°")
                 print(f"[STATUS] Memory: {len(self.memory.cognitive_history)} states, "
                       f"{len(self.memory.decision_history)} decisions")
                 
@@ -535,19 +543,21 @@ async def run_with_websocket(agent: MindAwareAgent, iterations: int = 20, interv
         print(f"\n[EEG] Focus: {cognitive_state['focus']:.3f} | "
               f"Fatigue: {cognitive_state['fatigue']:.3f}")
         
-        # Process decision (tools already update altitude internally)
+        # Process decision
         decision = agent.process_cognitive_state(cognitive_state)
         
-        # Get updated telemetry from tools
-        status = agent.tools.get_status()
-        telemetry = {
-            "altitude_m": status.get("altitude_m", 0.0),
-            "yaw_deg": status.get("yaw_deg", 0.0),
-            "rotation_deg": status.get("yaw_deg", 0.0),  # Alias for compatibility
-            "battery": 100,  # Default battery level
-            "mission_progress": 0,
-            "status": "active"
-        }
+        # Update drone based on actions
+        if decision['actions_taken']:
+            for action in decision['actions_taken']:
+                if action['tool'] in ['takeoff', 'land']:
+                    new_altitude = action['result'].get('new_altitude_m', 0)
+                    agent.drone_sim.update_altitude(new_altitude)
+                elif action['tool'] == 'maintain_altitude':
+                    # No action needed - altitude maintained
+                    pass  # Yaw controlled by EEG
+        
+        # Get updated telemetry
+        telemetry = agent.drone_sim.get_telemetry()
         
         # Broadcast to connected clients
         await broadcast_cognitive_state(cognitive_state)
@@ -646,10 +656,10 @@ def main():
             agent.run_real_eeg_loop(interval=args.interval)
         else:
             # Simulation mode: fixed iterations
-            agent.run_simulation_loop(
-                iterations=args.iterations,
-                interval=args.interval
-            )
+        agent.run_simulation_loop(
+            iterations=args.iterations,
+            interval=args.interval
+        )
     else:
         print("\n[INFO] Simulation skipped. Agent ready for API requests.")
         print("[INFO] Use POST /agent endpoint to process cognitive states.")

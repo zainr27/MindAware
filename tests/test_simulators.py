@@ -1,12 +1,12 @@
 """
-Test suite for EEG simulator.
+Test suite for EEG and Drone simulators.
 """
 
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.sim import EEGSimulator
+from src.sim import EEGSimulator, DroneSimulator
 
 
 def test_eeg_simulator_normal():
@@ -90,10 +90,60 @@ def test_eeg_simulator_degrading():
     print("✅ EEG Simulator - Degrading PASSED")
 
 
+def test_drone_simulator():
+    """Test drone simulator basic functionality."""
+    print("\n[TEST] Drone Simulator")
+    
+    sim = DroneSimulator()
+    
+    # Check initial state (allow small noise in altitude)
+    telemetry = sim.get_telemetry()
+    assert abs(telemetry["altitude_m"]) < 0.1, f"Should start at ground level, got {telemetry['altitude_m']}"
+    assert telemetry["rotation_deg"] == 0.0, "Should start at 0°"
+    assert abs(telemetry["battery"] - 100.0) < 0.5, "Should start at full battery"
+    
+    # Update altitude
+    sim.update_altitude(1.0)
+    telemetry = sim.get_telemetry()
+    assert abs(telemetry["altitude_m"] - 1.0) < 0.1, "Should update altitude to 1m"
+    
+    # Update rotation
+    sim.update_rotation(180.0)
+    telemetry = sim.get_telemetry()
+    assert telemetry["rotation_deg"] == 180.0, "Should update rotation to 180°"
+    
+    # Test altitude cap at 1.0m (allow for noise in telemetry)
+    sim.update_altitude(5.0)
+    # Check internal altitude is capped
+    assert sim.altitude_m <= 1.0, f"Internal altitude should be capped at 1.0m, got {sim.altitude_m}"
+    # Telemetry may have noise, so check it's close to cap
+    telemetry = sim.get_telemetry()
+    assert telemetry["altitude_m"] <= 1.1, f"Telemetry altitude should be ~1.0m (with noise), got {telemetry['altitude_m']}"
+    
+    print("✅ Drone Simulator PASSED")
+
+
+def test_drone_simulator_battery_drain():
+    """Test that battery drains over time."""
+    print("\n[TEST] Drone Simulator - Battery drain")
+    
+    sim = DroneSimulator()
+    initial_battery = sim.battery
+    
+    # Get telemetry multiple times
+    for _ in range(10):
+        sim.get_telemetry()
+    
+    final_battery = sim.battery
+    assert final_battery < initial_battery, "Battery should drain over time"
+    
+    print("✅ Drone Simulator - Battery drain PASSED")
+
+
 def run_all_tests():
     """Run all simulator tests."""
     print("\n" + "="*60)
-    print("TESTING: EEG Simulator")
+    print("TESTING: Simulators (EEG & Drone)")
     print("="*60 + "\n")
     
     try:
@@ -101,6 +151,8 @@ def run_all_tests():
         test_eeg_simulator_critical()
         test_eeg_simulator_mixed()
         test_eeg_simulator_degrading()
+        test_drone_simulator()
+        test_drone_simulator_battery_drain()
         
         print("\n" + "="*60)
         print("✅ ALL SIMULATOR TESTS PASSED!")

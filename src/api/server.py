@@ -134,10 +134,10 @@ async def process_cognitive_state(request: CognitiveStateRequest):
         # Decide using LLM or policy
         if llm_agent is not None:
             # LLM path (with voice confirmation)
-            decision = llm_agent.reason_about_state(
-                cognitive_state,
-                policy_result["recommendations"]
-            )
+        decision = llm_agent.reason_about_state(
+            cognitive_state,
+            policy_result["recommendations"]
+        )
         else:
             # Policy-only path (still with voice confirmation if enabled)
             actions_taken = []

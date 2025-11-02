@@ -6,8 +6,11 @@ YAW is controlled passively by the EEG (head turning), not by commands.
 Partner's drone step names: ["TAKEOFF", "LAND", "FLAND"]
 """
 
+import os
 import json
-from typing import Dict, Any
+import requests
+from requests.auth import HTTPBasicAuth
+from typing import Dict, Any, Optional
 
 
 class DroneTools:
@@ -15,32 +18,98 @@ class DroneTools:
     
     TAKEOFF_ALTITUDE = 1.0  # Takeoff altitude in meters
     
-    def __init__(self):
+    # Drone control authentication (from initial_demo_program.py)
+    AUTH_USERNAME = "BCITeam"
+    AUTH_PASSWORD = "DronesRCool"
+    
+    def __init__(self, drone_base_url: Optional[str] = None):
+        """
+        Initialize DroneTools.
+        
+        Args:
+            drone_base_url: Base URL for drone control API (e.g., "http://192.168.86.139:8080")
+                           If None, tries to get from DRONE_BASE_URL environment variable,
+                           or defaults to "http://192.168.86.139:8080"
+        """
         self.current_altitude = 0.0  # meters
         self.current_yaw = 0.0  # degrees (controlled by EEG, not commands)
         self.action_history = []
+        
+        # Get drone base URL from parameter, env var, or default
+        if drone_base_url:
+            self.drone_base_url = drone_base_url
+        else:
+            self.drone_base_url = os.getenv("DRONE_BASE_URL", "http://192.168.86.139:8080")
+        
+        # Ensure URL doesn't end with /
+        if self.drone_base_url.endswith("/"):
+            self.drone_base_url = self.drone_base_url[:-1]
+        
+        print(f"[TOOL] DroneTools initialized with URL: {self.drone_base_url}")
+    
+    def _send_drone_command(self, endpoint: str) -> bool:
+        """
+        Send a command to the actual drone hardware.
+        
+        Args:
+            endpoint: API endpoint (e.g., "/takeoff", "/land", "/fland")
+        
+        Returns:
+            True if command was successfully sent, False otherwise
+        """
+        url = f"{self.drone_base_url}{endpoint}"
+        auth = HTTPBasicAuth(self.AUTH_USERNAME, self.AUTH_PASSWORD)
+        
+        try:
+            print(f"\n🚁 [DRONE] Sending command to: {url}")
+            response = requests.get(url, auth=auth, timeout=5)
+            
+            if response.status_code == 200:
+                print(f"✅ [DRONE] Command successful: {response.status_code} - {response.text}")
+                return True
+            else:
+                print(f"⚠️  [DRONE] Command returned status {response.status_code}: {response.text}")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ [DRONE] Connection error: {e}")
+            print(f"   Make sure drone is running and accessible at {self.drone_base_url}")
+            return False
     
     def takeoff(self) -> Dict[str, Any]:
         """
         Takeoff to 1 meter altitude (operator is performing well).
         Used when ALL parameters are good.
         
+        This method sends an actual command to the drone hardware via HTTP.
+        
         Returns:
             Result dictionary
         """
         old_altitude = self.current_altitude
-        self.current_altitude = self.TAKEOFF_ALTITUDE
+        
+        # Send actual command to drone
+        command_success = self._send_drone_command("/takeoff")
+        
+        # Update internal state if command succeeded
+        if command_success:
+            self.current_altitude = self.TAKEOFF_ALTITUDE
+        else:
+            # Even if command failed, log the attempt
+            # The drone may not be connected, but we still track the intended action
+            print(f"[TOOL] ⚠️  Takeoff command sent but may not have reached drone")
         
         result = {
-            "success": True,
+            "success": command_success,
             "action": "takeoff",
             "previous_altitude_m": round(old_altitude, 2),
             "new_altitude_m": round(self.current_altitude, 2),
-            "message": f"Drone takeoff to {self.TAKEOFF_ALTITUDE}m (from {old_altitude:.2f}m)"
+            "message": f"Drone takeoff to {self.TAKEOFF_ALTITUDE}m (from {old_altitude:.2f}m)" if command_success else f"Takeoff command sent (drone may not be connected)",
+            "drone_command_sent": command_success
         }
         
         self.action_history.append(result)
-        print(f"[TOOL] takeoff: {old_altitude:.2f}m → {self.current_altitude:.2f}m")
+        print(f"[TOOL] takeoff: {old_altitude:.2f}m → {self.current_altitude:.2f}m (drone: {'✅' if command_success else '⚠️'})")
         
         return result
     
@@ -49,22 +118,34 @@ class DroneTools:
         Land drone immediately (return to ground level).
         Used when ALL parameters are bad.
         
+        This method sends an actual command to the drone hardware via HTTP.
+        
         Returns:
             Result dictionary
         """
         old_altitude = self.current_altitude
-        self.current_altitude = 0.0
+        
+        # Send actual command to drone
+        command_success = self._send_drone_command("/land")
+        
+        # Update internal state if command succeeded
+        if command_success:
+            self.current_altitude = 0.0
+        else:
+            # Even if command failed, log the attempt
+            print(f"[TOOL] ⚠️  Land command sent but may not have reached drone")
         
         result = {
-            "success": True,
+            "success": command_success,
             "action": "land",
             "previous_altitude_m": round(old_altitude, 2),
             "new_altitude_m": 0.0,
-            "message": f"Drone landed (from {old_altitude:.2f}m to ground level)"
+            "message": f"Drone landed (from {old_altitude:.2f}m to ground level)" if command_success else f"Land command sent (drone may not be connected)",
+            "drone_command_sent": command_success
         }
         
         self.action_history.append(result)
-        print(f"[TOOL] land: {old_altitude:.2f}m → 0.00m (GROUND)")
+        print(f"[TOOL] land: {old_altitude:.2f}m → 0.00m (GROUND) (drone: {'✅' if command_success else '⚠️'})")
         
         return result
     
