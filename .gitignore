@@ -1,0 +1,39 @@
+# Environment variables (contains API keys!)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+
+# Decision logs (can be large)
+decision_logs/
+
+# Node modules
+node_modules/
+ui/frontend/node_modules/
+
+# Build artifacts
+ui/frontend/build/
+ui/frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
