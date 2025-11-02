@@ -1,5 +1,6 @@
 """
 Binary policy for hackathon: All parameters check → binary drone control.
+Partner's drone step names: ["TAKEOFF", "YAW RIGHT", "YAW CENTER", "LAND", "FLAND"]
 """
 
 from typing import Dict, Any, List
@@ -11,7 +12,7 @@ class CognitivePolicy:
     
     ALL GOOD (focus HIGH + fatigue/overload/stress LOW) → TAKEOFF to 1m
     ALL BAD (focus LOW + fatigue/overload/stress HIGH) → LAND (go to ground)
-    Otherwise → TURN_AROUND (mixed state indicator)
+    Otherwise → YAW RIGHT (mixed state indicator, rotate right)
     """
     
     def __init__(self):
@@ -57,12 +58,13 @@ class CognitivePolicy:
         )
         
         if all_good:
-            # All parameters good → TAKEOFF to 1m
+            # All parameters good → TAKEOFF to 1m (automatic, just inform pilot)
             severity = "good"
             recommendations.append({
                 "action": "takeoff",
                 "reason": "All parameters optimal - operator performing excellently",
-                "parameters": {}
+                "parameters": {},
+                "urgent": True  # Automatic takeoff - no confirmation needed, just inform
             })
             reasoning.append(f"✅ Focus: {focus:.2f} (≥{self.FOCUS_HIGH})")
             reasoning.append(f"✅ Fatigue: {fatigue:.2f} (≤{self.NEGATIVE_LOW})")
@@ -71,12 +73,13 @@ class CognitivePolicy:
             reasoning.append("All parameters good → TAKEOFF to 1m")
         
         elif all_bad:
-            # All parameters bad → LAND (go to ground)
+            # All parameters bad → LAND (go to ground) - ASK FOR CONFIRMATION
             severity = "critical"
             recommendations.append({
                 "action": "land",
                 "reason": "All parameters critical - operator needs immediate support",
-                "parameters": {}
+                "parameters": {},
+                "urgent": False  # Always ask for permission before landing
             })
             reasoning.append(f"❌ Focus: {focus:.2f} (≤{self.FOCUS_LOW})")
             reasoning.append(f"❌ Fatigue: {fatigue:.2f} (≥{self.NEGATIVE_HIGH})")
@@ -85,14 +88,15 @@ class CognitivePolicy:
             reasoning.append("All parameters bad → LAND immediately")
         
         else:
-            # Mixed state → turn around as visual indicator
+            # Mixed state → yaw right as visual indicator (non-urgent)
             severity = "normal"
             recommendations.append({
-                "action": "turn_around",
+                "action": "yaw_right",
                 "reason": "Mixed parameters - visual indicator without altitude change",
-                "parameters": {}
+                "parameters": {},
+                "urgent": False  # Non-urgent: can ask for confirmation
             })
-            reasoning.append("🔄 Mixed parameters - rotating drone 180°")
+            reasoning.append("🔄 Mixed parameters - executing YAW RIGHT (rotate 90°)")
             reasoning.append(f"Focus: {focus:.2f}, Fatigue: {fatigue:.2f}, Overload: {overload:.2f}, Stress: {stress:.2f}")
         
         return {

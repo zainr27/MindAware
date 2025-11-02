@@ -44,6 +44,15 @@ class MindAwareAgent:
         self.use_llm = use_llm
         self.use_real_eeg = use_real_eeg
         
+        # Initialize voice confirmation (independent of LLM)
+        try:
+            from agent.voice_confirmer import VoiceConfirmer
+            self.voice_confirmer = VoiceConfirmer()
+            print("[INIT] Voice confirmation system initialized")
+        except Exception as e:
+            print(f"[INIT] Voice confirmation unavailable: {e}")
+            self.voice_confirmer = None
+        
         if use_llm:
             try:
                 self.llm_agent = LLMAgent(self.tools, self.memory)
@@ -117,15 +126,51 @@ class MindAwareAgent:
                 policy_result["recommendations"]
             )
         else:
-            # Fallback to policy-only mode
+            # Fallback to policy-only mode (but still with voice confirmation if enabled)
             actions_taken = []
+            
             for rec in policy_result["recommendations"][:2]:  # Take top 2
+                # Voice handling: inform for takeoff, confirm for landing
+                if self.voice_confirmer and self.voice_confirmer.enabled:
+                    action = rec["action"]
+                    is_urgent = rec.get("urgent", False)
+                    
+                    if action == "takeoff" and is_urgent:
+                        # Automatic takeoff - just inform pilot
+                        self.voice_confirmer.inform_pilot(action, cognitive_state)
+                    elif action == "land" and not is_urgent:
+                        # Landing requires confirmation
+                        print(f"[VOICE] Requesting confirmation for: {action}")
+                        
+                        confirmed = self.voice_confirmer.ask_confirmation(
+                            action=action,
+                            context=cognitive_state
+                        )
+                        
+                        if not confirmed:
+                            print(f"[VOICE] User denied {action}")
+                            actions_taken.append({
+                                "tool": action,
+                                "arguments": rec.get("parameters", {}),
+                                "result": {"cancelled": True, "reason": "User denied via voice"},
+                                "reason": rec["reason"],
+                                "voice_confirmed": False
+                            })
+                            continue  # Skip this action
+                        
+                        print(f"[VOICE] User confirmed {action}")
+                    elif is_urgent:
+                        # Other urgent actions bypass voice
+                        print(f"[VOICE] Bypassing voice for urgent action: {action}")
+                
+                # Execute the tool
                 result = self.tools.execute_tool(rec["action"], rec.get("parameters", {}))
                 actions_taken.append({
                     "tool": rec["action"],
                     "arguments": rec.get("parameters", {}),
                     "result": result,
-                    "reason": rec["reason"]
+                    "reason": rec["reason"],
+                    "voice_confirmed": self.voice_confirmer.enabled if self.voice_confirmer else False
                 })
             
             decision = {
@@ -141,9 +186,47 @@ class MindAwareAgent:
         self.logger.log_decision(decision)
         self.memory.add_decision(decision)
         
+        # Store drone command for partner's hardware
+        if decision['actions_taken']:
+            from src.api.eeg_ingestion import set_latest_drone_command
+            
+            # Get the primary action (should only be one in binary mode)
+            primary_action = decision['actions_taken'][0]
+            command = primary_action['tool']
+            
+            set_latest_drone_command(
+                command=command,
+                reasoning=decision['llm_reasoning'],
+                metadata={
+                    'cognitive_state': cognitive_state,
+                    'altitude': primary_action['result'].get('new_altitude_m'),
+                    'rotation': primary_action['result'].get('new_rotation_deg')
+                }
+            )
+            print(f"[DRONE] Command stored: {command}")
+        else:
+            from src.api.eeg_ingestion import set_latest_drone_command
+            set_latest_drone_command(
+                command='maintain',
+                reasoning='Normal operation - no action needed',
+                metadata={'cognitive_state': cognitive_state}
+            )
+        
         print(f"[DECISION] Actions taken: {len(decision['actions_taken'])}")
         
         return decision
+    
+    async def _broadcast_updates(self, cognitive_state: dict, telemetry: dict, decision: dict):
+        """Broadcast updates to WebSocket clients."""
+        from src.api.websocket import broadcast_cognitive_state, broadcast_decision, broadcast_telemetry
+        
+        try:
+            await broadcast_cognitive_state(cognitive_state)
+            await broadcast_telemetry(telemetry)
+            await broadcast_decision(decision)
+        except Exception as e:
+            # Silently skip if WebSocket not available
+            pass
     
     def run_simulation_loop(self, iterations: int = 20, interval: float = 3.0):
         """
@@ -185,9 +268,12 @@ class MindAwareAgent:
                     if action['tool'] in ['takeoff', 'land']:
                         new_altitude = action['result'].get('new_altitude_m', 0)
                         self.drone_sim.update_altitude(new_altitude)
-                    elif action['tool'] == 'turn_around':
+                    elif action['tool'] == 'yaw_right':
                         new_rotation = action['result'].get('new_rotation_deg', 0)
                         self.drone_sim.update_rotation(new_rotation)
+            
+            # Broadcast to WebSocket (run in background)
+            asyncio.run(self._broadcast_updates(cognitive_state, telemetry, decision))
             
             print(f"\n[STATUS] Altitude: {self.drone_sim.get_altitude():.2f}m | "
                   f"Rotation: {self.drone_sim.get_rotation():.0f}°")
@@ -249,7 +335,7 @@ async def run_with_websocket(agent: MindAwareAgent, iterations: int = 20, interv
                 if action['tool'] in ['takeoff', 'land']:
                     new_altitude = action['result'].get('new_altitude_m', 0)
                     agent.drone_sim.update_altitude(new_altitude)
-                elif action['tool'] == 'turn_around':
+                elif action['tool'] == 'yaw_right':
                     new_rotation = action['result'].get('new_rotation_deg', 0)
                     agent.drone_sim.update_rotation(new_rotation)
         

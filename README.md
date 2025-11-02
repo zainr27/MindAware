@@ -159,6 +159,12 @@ Options:
   --llm           Enable LLM reasoning (requires OPENAI_API_KEY)
   --real-eeg      Use real EEG hardware (data via /eeg/ingest API)
   --no-sim        Skip simulation (API-only mode)
+
+Voice Confirmation (configure via .env):
+  VOICE_CONFIRMATION_ENABLED=true/false  # Enable voice "yes/no" confirmation
+  VOICE_CONFIRMATION_TIMEOUT=5           # Seconds to wait for response
+  VOICE_DEFAULT_RESPONSE=no              # Default when unclear
+  VOICE_BYPASS_URGENT=true               # Skip confirmation for emergencies
 ```
 
 ### Example Commands
@@ -187,6 +193,19 @@ python src/main.py --real-eeg --llm --iterations 100 --interval 3
 ```bash
 python src/main.py --scenario fatigue --iterations 20 --interval 2 --llm
 # Watch the drone altitude drop as simulated operator fatigues
+```
+
+**Voice confirmation mode:**
+```bash
+# First, enable in .env: VOICE_CONFIRMATION_ENABLED=true
+python src/main.py --scenario normal --iterations 10 --llm
+# System will ask "Should I take the drone up?" - say "yes" or "no"
+```
+
+**Test voice system:**
+```bash
+python test_voice.py
+# Runs diagnostics: API, microphone, speaker, voice confirmation
 ```
 
 ## 🎯 Hackathon Demo Guide
@@ -458,6 +477,7 @@ The frontend dashboard (`http://localhost:5173`) displays:
 
 - **[GETTING_STARTED.md](GETTING_STARTED.md)** - Quick setup, usage, commands, troubleshooting
 - **[EEG_INTEGRATION.md](EEG_INTEGRATION.md)** - Real EEG hardware integration guide
+- **[VOICE_CONFIRMATION.md](VOICE_CONFIRMATION.md)** - Voice confirmation setup and usage guide
 - **[README.md](README.md)** - This file (comprehensive overview)
 
 ## 📝 Decision Logging
@@ -608,9 +628,13 @@ curl http://localhost:8000/logs?count=5
 
 ### Environment Variables
 
-- `OPENAI_API_KEY` - Your OpenAI API key for LLM reasoning
+- `OPENAI_API_KEY` - Your OpenAI API key for LLM reasoning and voice features
 - `AGENT_MODE` - `simulation` or `production`
 - `LOG_LEVEL` - `DEBUG`, `INFO`, `WARNING`, `ERROR`
+- `VOICE_CONFIRMATION_ENABLED` - Enable voice confirmation (true/false)
+- `VOICE_CONFIRMATION_TIMEOUT` - Seconds to wait for voice response (default: 5)
+- `VOICE_DEFAULT_RESPONSE` - Default when unclear: "yes" or "no" (default: no)
+- `VOICE_BYPASS_URGENT` - Skip confirmation for critical actions (default: true)
 
 ### Simulation Scenarios
 
@@ -699,6 +723,7 @@ curl http://localhost:8000/logs?count=5
 - ✅ LLM-enhanced decision making (optional)
 - ✅ Real-time dashboard with altitude + rotation indicators
 - ✅ Guard system (no unnecessary actions)
+- ✅ Voice confirmation system (Whisper + TTS) - Human-in-the-loop safety
 
 ### Planned Enhancements
 
@@ -719,12 +744,14 @@ curl http://localhost:8000/logs?count=5
 - Pattern recognition for common cognitive states
 - Machine learning for personalized thresholds
 
-**Phase 3: Human-in-the-Loop**
-- Voice confirmation for actions (Coval integration)
-- Operator override capabilities
-- Configurable automation levels
-- Emergency stop mechanism
-- Multi-operator collaboration
+**Phase 3: Human-in-the-Loop** ✅ (Partially Complete)
+- ✅ Voice confirmation for actions (OpenAI Whisper + TTS)
+- ✅ Urgent action bypass (critical landings skip confirmation)
+- ✅ Configurable timeout and defaults
+- Operator override capabilities (planned)
+- Configurable automation levels (planned)
+- Emergency stop mechanism (planned)
+- Multi-operator collaboration (planned)
 
 **Phase 4: Production Features**
 - Replace `DroneSimulator` with real drone API (DJI SDK, etc.)

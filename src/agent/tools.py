@@ -1,6 +1,8 @@
 """
 Tool functions that the LLM agent can call to control the drone system.
-Binary control: TAKEOFF to 1m or LAND to ground. TURN_AROUND for mixed states.
+Binary control: TAKEOFF to 1m or LAND to ground. YAW RIGHT for mixed states.
+
+Partner's drone step names: ["TAKEOFF", "YAW RIGHT", "YAW CENTER", "LAND", "FLAND"]
 """
 
 import json
@@ -8,7 +10,7 @@ from typing import Dict, Any
 
 
 class DroneTools:
-    """Binary drone control: takeoff (1m), land (0m), or turn_around (180°)."""
+    """Binary drone control: TAKEOFF (1m), LAND (0m), or YAW RIGHT (rotate)."""
     
     TAKEOFF_ALTITUDE = 1.0  # Takeoff altitude in meters
     
@@ -65,27 +67,30 @@ class DroneTools:
         
         return result
     
-    def turn_around(self) -> Dict[str, Any]:
+    def yaw_right(self) -> Dict[str, Any]:
         """
-        Rotate drone 180 degrees (visual indicator).
+        Rotate drone to the right (yaw right command).
         Used for mixed states or when nothing needs to change.
+        Partner's drone executes: "YAW RIGHT" step
         
         Returns:
             Result dictionary
         """
         old_rotation = self.current_rotation
-        self.current_rotation = (self.current_rotation + 180) % 360
+        # Yaw right by 90 degrees
+        self.current_rotation = (self.current_rotation + 90) % 360
         
         result = {
             "success": True,
-            "action": "turn_around",
+            "action": "yaw_right",
+            "partner_command": "YAW RIGHT",
             "previous_rotation_deg": round(old_rotation, 1),
             "new_rotation_deg": round(self.current_rotation, 1),
-            "message": f"Drone rotated 180° (from {old_rotation:.1f}° to {self.current_rotation:.1f}°)"
+            "message": f"Drone yawed right 90° (from {old_rotation:.1f}° to {self.current_rotation:.1f}°)"
         }
         
         self.action_history.append(result)
-        print(f"[TOOL] turn_around: {old_rotation:.1f}° → {self.current_rotation:.1f}°")
+        print(f"[TOOL] yaw_right: {old_rotation:.1f}° → {self.current_rotation:.1f}°")
         
         return result
     
@@ -106,13 +111,13 @@ class DroneTools:
         elif tool_name == "land":
             return self.land()
         
-        elif tool_name == "turn_around":
-            return self.turn_around()
+        elif tool_name == "yaw_right":
+            return self.yaw_right()
         
         else:
             return {
                 "success": False,
-                "error": f"Unknown tool: {tool_name}. Available tools: takeoff, land, turn_around"
+                "error": f"Unknown tool: {tool_name}. Available tools: takeoff, land, yaw_right"
             }
     
     def get_tool_definitions(self) -> list:
@@ -127,7 +132,7 @@ class DroneTools:
                 "type": "function",
                 "function": {
                     "name": "takeoff",
-                    "description": "Takeoff to 1 meter altitude. Use ONLY when ALL operator parameters are good (focus ≥0.6, fatigue/overload/stress ≤0.4). This is a binary action - drone goes straight to 1m.",
+                    "description": "Execute TAKEOFF command - drone rises to 1 meter altitude. Use ONLY when ALL operator parameters are good (focus ≥0.6, fatigue/overload/stress ≤0.4). Binary action - goes straight to 1m. Maps to partner's 'TAKEOFF' step.",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -139,7 +144,7 @@ class DroneTools:
                 "type": "function",
                 "function": {
                     "name": "land",
-                    "description": "Land the drone immediately (return to ground level). Use ONLY when ALL operator parameters are bad (focus ≤0.4, fatigue/overload/stress ≥0.6). This is an emergency response.",
+                    "description": "Execute LAND command - drone lands immediately (returns to ground). Use ONLY when ALL operator parameters are bad (focus ≤0.4, fatigue/overload/stress ≥0.6). Emergency safety response. Maps to partner's 'LAND' step.",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -150,8 +155,8 @@ class DroneTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "turn_around",
-                    "description": "Rotate drone 180 degrees as a visual indicator. Use when parameters are mixed (some good, some bad) or when state hasn't changed significantly. This maintains current altitude.",
+                    "name": "yaw_right",
+                    "description": "Execute YAW RIGHT command - drone rotates 90° to the right. Use when parameters are MIXED (some good, some bad) or when no altitude change is needed. Visual indicator only, maintains current altitude. Maps to partner's 'YAW RIGHT' step.",
                     "parameters": {
                         "type": "object",
                         "properties": {},

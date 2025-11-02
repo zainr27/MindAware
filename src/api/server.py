@@ -43,13 +43,22 @@ tools = DroneTools()
 logger = DecisionLogger()
 memory = AgentMemory()
 
+# Initialize voice confirmation (independent of LLM)
+try:
+    from src.agent.voice_confirmer import VoiceConfirmer
+    voice_confirmer = VoiceConfirmer()
+    print("[API] Voice confirmation system initialized")
+except Exception as e:
+    print(f"[API] Voice confirmation unavailable: {e}")
+    voice_confirmer = None
+
 # Initialize LLM agent (requires OPENAI_API_KEY)
 try:
     llm_agent = LLMAgent(tools, memory)
     print("[API] LLM agent initialized successfully")
 except ValueError as e:
     print(f"[API] Warning: Could not initialize LLM agent: {e}")
-    print("[API] The /agent endpoint will fail without a valid OPENAI_API_KEY")
+    print("[API] API will work in policy-only mode")
     llm_agent = None
 
 
@@ -102,16 +111,11 @@ async def process_cognitive_state(request: CognitiveStateRequest):
     """
     Process a cognitive state and return agent decision.
     
-    This is the main endpoint for the agent loop.
-    Requires OPENAI_API_KEY to be set for LLM reasoning.
+    Works in both LLM mode (with reasoning) and policy-only mode.
+    Voice confirmation works in both modes if enabled.
     """
     try:
-        # Check if LLM agent is available
-        if llm_agent is None:
-            raise HTTPException(
-                status_code=503,
-                detail="LLM agent not initialized. OPENAI_API_KEY must be set."
-            )
+        from datetime import datetime, timezone
         
         # Convert to dict
         cognitive_state = {
@@ -127,11 +131,68 @@ async def process_cognitive_state(request: CognitiveStateRequest):
         # Get policy recommendations
         policy_result = policy.evaluate(cognitive_state)
         
-        # Get LLM decision
-        decision = llm_agent.reason_about_state(
-            cognitive_state,
-            policy_result["recommendations"]
-        )
+        # Decide using LLM or policy
+        if llm_agent is not None:
+            # LLM path (with voice confirmation)
+            decision = llm_agent.reason_about_state(
+                cognitive_state,
+                policy_result["recommendations"]
+            )
+        else:
+            # Policy-only path (still with voice confirmation if enabled)
+            actions_taken = []
+            
+            for rec in policy_result["recommendations"][:2]:
+                # Voice handling: inform for takeoff, confirm for landing
+                if voice_confirmer and voice_confirmer.enabled:
+                    action = rec["action"]
+                    is_urgent = rec.get("urgent", False)
+                    
+                    if action == "takeoff" and is_urgent:
+                        # Automatic takeoff - just inform pilot
+                        voice_confirmer.inform_pilot(action, cognitive_state)
+                    elif action == "land" and not is_urgent:
+                        # Landing requires confirmation
+                        print(f"[VOICE] Requesting confirmation for: {action}")
+                        
+                        confirmed = voice_confirmer.ask_confirmation(
+                            action=action,
+                            context=cognitive_state
+                        )
+                        
+                        if not confirmed:
+                            print(f"[VOICE] User denied {action}")
+                            actions_taken.append({
+                                "tool": action,
+                                "arguments": rec.get("parameters", {}),
+                                "result": {"cancelled": True, "reason": "User denied via voice"},
+                                "reason": rec["reason"],
+                                "voice_confirmed": False
+                            })
+                            continue
+                        
+                        print(f"[VOICE] User confirmed {action}")
+                    elif is_urgent:
+                        # Other urgent actions bypass voice
+                        print(f"[VOICE] Bypassing voice for urgent action: {action}")
+                
+                # Execute tool
+                result = tools.execute_tool(rec["action"], rec.get("parameters", {}))
+                actions_taken.append({
+                    "tool": rec["action"],
+                    "arguments": rec.get("parameters", {}),
+                    "result": result,
+                    "reason": rec["reason"],
+                    "voice_confirmed": voice_confirmer.enabled if voice_confirmer else False
+                })
+            
+            decision = {
+                "cognitive_state": cognitive_state,
+                "policy_recommendations": policy_result["recommendations"],
+                "llm_reasoning": "Policy-only mode (no LLM)",
+                "actions_taken": actions_taken,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
         
         # Log decision
         logger.log_decision(decision)

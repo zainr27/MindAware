@@ -85,6 +85,9 @@ class RealEEGAdapter:
             EEGReading object or None if parsing fails
         """
         try:
+            # Strip any prefix before the actual data (e.g. "not_focus | " or "yaw_left | ")
+            if " | " in raw_string:
+                raw_string = raw_string.split(" | ", 1)[1]
             # Extract focus values
             focus_match = re.search(r'focus:([\d.]+)', raw_string)
             not_focus_match = re.search(r'not_focus:([\d.]+)', raw_string)
@@ -92,7 +95,7 @@ class RealEEGAdapter:
             # Extract yaw values
             yaw_left_match = re.search(r'yaw_left:([\d.]+)', raw_string)
             yaw_right_match = re.search(r'yaw_right:([\d.]+)', raw_string)
-            yaw_abs_match = re.search(r'yaw=([\d.]+)', raw_string)
+            yaw_abs_match = re.search(r'yaw=(-?[\d.]+)', raw_string)  # Allow negative yaw
             
             # Extract blink rate
             blink_match = re.search(r'rate[\d.]+=([\d.]+)', raw_string)

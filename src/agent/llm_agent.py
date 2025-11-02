@@ -6,6 +6,7 @@ import os
 import json
 from typing import Dict, Any, List, Optional
 from openai import OpenAI
+# from .voice_confirmer import VoiceConfirmer  # Not implemented yet
 
 
 class LLMAgent:
@@ -22,6 +23,14 @@ class LLMAgent:
         self.tools = tools_instance
         self.memory = memory_instance
         self.model = "gpt-4-turbo-preview"
+        
+        # Initialize voice confirmation system
+        try:
+            self.voice_confirmer = VoiceConfirmer()
+            print(f"[LLM] Voice confirmation system initialized")
+        except Exception as e:
+            print(f"[LLM] Warning: Voice confirmation unavailable: {e}")
+            self.voice_confirmer = None
     
     def reason_about_state(
         self,
@@ -54,26 +63,28 @@ class LLMAgent:
         
         # Build system prompt
         system_prompt = """You are an AI assistant monitoring a drone operator's cognitive state via EEG.
-The drone provides binary control reflecting the operator's wellness:
+The drone provides binary control reflecting the operator's wellness.
+
+PARTNER'S DRONE COMMANDS: ["TAKEOFF", "YAW RIGHT", "YAW CENTER", "LAND", "FLAND"]
 
 RULES:
-- ALL GOOD (focus ≥0.6 + fatigue/overload/stress ≤0.4) → takeoff() to 1m
-- ALL BAD (focus ≤0.4 + fatigue/overload/stress ≥0.6) → land() to ground
-- Mixed state (some good, some bad) → turn_around() 180° (visual indicator)
+- ALL GOOD (focus ≥0.6 + fatigue/overload/stress ≤0.4) → takeoff() to 1m [maps to TAKEOFF]
+- ALL BAD (focus ≤0.4 + fatigue/overload/stress ≥0.6) → land() to ground [maps to LAND]
+- Mixed state (some good, some bad) → yaw_right() rotate 90° right [maps to YAW RIGHT]
 
 You have access to exactly THREE tools:
-- takeoff: Binary takeoff to 1 meter when ALL parameters are optimal
-- land: Binary landing to ground (0m) when ALL parameters are critical
-- turn_around: Rotate 180° for mixed states or when no altitude change needed
+- takeoff: Binary takeoff to 1 meter when ALL parameters are optimal → executes TAKEOFF step
+- land: Binary landing to ground (0m) when ALL parameters are critical → executes LAND step
+- yaw_right: Rotate 90° right for mixed states or no altitude change needed → executes YAW RIGHT step
 
 DECISION RULES:
 1. You will ONLY be called when policy recommendations are provided.
 2. Follow the policy recommendations - they already checked ALL parameters.
 3. Use takeoff() ONLY when ALL parameters are good (not just some).
 4. Use land() ONLY when ALL parameters are bad (not just some).
-5. Use turn_around() for mixed states or when maintaining current state.
+5. Use yaw_right() for mixed states or when maintaining current state.
 
-The drone provides clear visual feedback: at 1m = operator excellent, at ground = operator critical, rotating = mixed state."""
+The drone provides clear visual feedback: at 1m = operator excellent, at ground = operator critical, rotating right = mixed state."""
         
         # Build user message with context
         user_message = f"""Current Cognitive State:
@@ -86,7 +97,9 @@ Policy Recommendations:
 {json.dumps(policy_recommendations, indent=2)}
 
 Recent Context:
-{json.dumps(context['trends'], indent=2)}
+- States processed: {context.get('state_count', 0)}
+- Decisions made: {context.get('decision_count', 0)}
+- Recent states: {json.dumps(context.get('recent_states', []), indent=2)}
 
 Based on this information, decide what actions to take (if any) and explain your reasoning."""
         
@@ -107,19 +120,50 @@ Based on this information, decide what actions to take (if any) and explain your
             
             assistant_message = response.choices[0].message
             
-            # Process function calls
+            # Process function calls WITH VOICE CONFIRMATION
             actions_taken = []
             if assistant_message.tool_calls:
                 for tool_call in assistant_message.tool_calls:
                     function_name = tool_call.function.name
                     function_args = json.loads(tool_call.function.arguments)
                     
+                    # NEW: Voice handling - inform for takeoff, confirm for landing
+                    if self.voice_confirmer and self.voice_confirmer.enabled:
+                        # Check if this is takeoff (automatic) or landing (requires confirmation)
+                        is_takeoff = function_name == "takeoff"
+                        requires_confirmation = self._requires_confirmation(function_name, policy_recommendations)
+                        
+                        if is_takeoff and not requires_confirmation:
+                            # Automatic takeoff - just inform pilot
+                            self.voice_confirmer.inform_pilot(function_name, cognitive_state)
+                        elif requires_confirmation:
+                            # Landing or other actions that need confirmation
+                            print(f"[VOICE] Requesting confirmation for: {function_name}")
+                            
+                            confirmed = self.voice_confirmer.ask_confirmation(
+                                action=function_name,
+                                context=cognitive_state
+                            )
+                            
+                            if not confirmed:
+                                print(f"[VOICE] User denied {function_name}")
+                                actions_taken.append({
+                                    "tool": function_name,
+                                    "arguments": function_args,
+                                    "result": {"cancelled": True, "reason": "User denied via voice"},
+                                    "voice_confirmed": False
+                                })
+                                continue  # Skip this action
+                            
+                            print(f"[VOICE] User confirmed {function_name}")
+                    
                     # Execute the tool
                     result = self.tools.execute_tool(function_name, function_args)
                     actions_taken.append({
                         "tool": function_name,
                         "arguments": function_args,
-                        "result": result
+                        "result": result,
+                        "voice_confirmed": self.voice_confirmer.enabled if self.voice_confirmer else False
                     })
             
             return {
@@ -135,12 +179,37 @@ Based on this information, decide what actions to take (if any) and explain your
             # Fallback to policy recommendations
             actions_taken = []
             for rec in policy_recommendations[:2]:  # Take top 2 recommendations
+                # Voice handling in fallback mode: inform for takeoff, confirm for landing
+                if self.voice_confirmer and self.voice_confirmer.enabled:
+                    action = rec["action"]
+                    is_takeoff = action == "takeoff"
+                    requires_confirmation = self._requires_confirmation(action, policy_recommendations)
+                    
+                    if is_takeoff and not requires_confirmation:
+                        # Automatic takeoff - just inform pilot
+                        self.voice_confirmer.inform_pilot(action, cognitive_state)
+                    elif requires_confirmation:
+                        # Landing or other actions that need confirmation
+                        confirmed = self.voice_confirmer.ask_confirmation(
+                            action=action,
+                            context=cognitive_state
+                        )
+                        if not confirmed:
+                            actions_taken.append({
+                                "tool": action,
+                                "arguments": rec.get("parameters", {}),
+                                "result": {"cancelled": True, "reason": "User denied via voice"},
+                                "voice_confirmed": False
+                            })
+                            continue
+                
                 result = self.tools.execute_tool(rec["action"], rec.get("parameters", {}))
                 actions_taken.append({
                     "tool": rec["action"],
                     "arguments": rec.get("parameters", {}),
                     "result": result,
-                    "reason": rec["reason"]
+                    "reason": rec["reason"],
+                    "voice_confirmed": self.voice_confirmer.enabled if self.voice_confirmer else False
                 })
             
             return {
@@ -150,6 +219,38 @@ Based on this information, decide what actions to take (if any) and explain your
                 "actions_taken": actions_taken,
                 "model": "policy_fallback"
             }
+    
+    def _requires_confirmation(self, action: str, recommendations: list) -> bool:
+        """
+        Determine if action needs voice confirmation.
+        
+        Rules:
+        - takeoff: Never requires confirmation (auto-execute)
+        - land: Always requires confirmation (even if marked urgent)
+        - Other actions: Check urgent flag
+        
+        Args:
+            action: Action name (takeoff, land, turn_around)
+            recommendations: List of policy recommendations
+        
+        Returns:
+            True if confirmation required, False if auto-execute
+        """
+        if action == "takeoff":
+            # Takeoff is automatic - no confirmation needed
+            return False
+        
+        if action == "land":
+            # Landing always requires confirmation
+            return True
+        
+        # Other actions: check urgent flag
+        for rec in recommendations:
+            if rec.get("action") == action and rec.get("urgent"):
+                return False
+        
+        # Default: require confirmation
+        return True
     
     def simple_reasoning(self, cognitive_state: Dict[str, Any]) -> str:
         """
