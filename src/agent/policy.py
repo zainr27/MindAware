@@ -1,5 +1,6 @@
 """
-Binary policy for hackathon: All parameters check → binary drone control.
+Binary policy for hackathon: FOCUS-ONLY control → binary drone altitude.
+Only FOCUS determines takeoff/land. Other metrics monitored but don't affect decisions.
 YAW is controlled passively by the EEG (head turning), not by commands.
 Partner's drone step names: ["TAKEOFF", "LAND", "FLAND"]
 """
@@ -9,12 +10,13 @@ from typing import Dict, Any, List
 
 class CognitivePolicy:
     """
-    Binary policy: Check if ALL parameters are good or bad.
+    Binary policy: FOCUS is the ONLY determinant for altitude control.
     
-    ALL GOOD (focus HIGH + fatigue/overload/stress LOW) → TAKEOFF to 1m
-    ALL BAD (focus LOW + fatigue/overload/stress HIGH) → LAND (go to ground)
-    Otherwise → MAINTAIN ALTITUDE (mixed state, no action)
+    HIGH FOCUS (≥0.6) → TAKEOFF to 1m
+    LOW FOCUS (≤0.4) → LAND (go to ground)
+    MID FOCUS (0.4 < focus < 0.6) → MAINTAIN ALTITUDE (no action)
     
+    Other metrics (fatigue, overload, stress) are tracked for display but don't affect decisions.
     YAW is controlled passively by EEG (head position), not by commands.
     """
     
@@ -27,10 +29,12 @@ class CognitivePolicy:
     
     def evaluate(self, cognitive_state: Dict[str, float], current_altitude: float = 0.0) -> Dict[str, Any]:
         """
-        Evaluate cognitive state with simple all-or-nothing logic.
+        Evaluate cognitive state using FOCUS as the sole determinant.
+        Other metrics (fatigue, overload, stress) are tracked but don't affect decisions.
         
         Args:
             cognitive_state: Current cognitive metrics
+            current_altitude: Current drone altitude (for grounded check)
         
         Returns:
             Policy evaluation with recommendations
@@ -44,75 +48,68 @@ class CognitivePolicy:
         severity = "normal"
         reasoning = []
         
-        # Check if ALL GOOD (focus high, negatives low)
-        all_good = (
-            focus >= self.FOCUS_HIGH and
-            fatigue <= self.NEGATIVE_LOW and
-            overload <= self.NEGATIVE_LOW and
-            stress <= self.NEGATIVE_LOW
-        )
+        # FOCUS is the ONLY determinant for altitude control
+        # High focus (≥0.6) → takeoff
+        # Low focus (≤0.4) → land
+        # Mid-range → no action
         
-        # Check if ALL BAD (focus low, negatives high)
-        all_bad = (
-            focus <= self.FOCUS_LOW and
-            fatigue >= self.NEGATIVE_HIGH and
-            overload >= self.NEGATIVE_HIGH and
-            stress >= self.NEGATIVE_HIGH
-        )
+        all_good = focus >= self.FOCUS_HIGH
+        all_bad = focus <= self.FOCUS_LOW
         
         if all_good:
-            # All parameters good → TAKEOFF to 1m (automatic, just inform pilot)
+            # High focus → TAKEOFF to 1m (automatic, just inform pilot)
             severity = "good"
             recommendations.append({
                 "action": "takeoff",
-                "reason": "All parameters optimal - operator performing excellently",
+                "reason": "High focus detected - operator performing excellently",
                 "parameters": {},
                 "urgent": True  # Automatic takeoff - no confirmation needed, just inform
             })
-            reasoning.append(f"✅ Focus: {focus:.2f} (≥{self.FOCUS_HIGH})")
-            reasoning.append(f"✅ Fatigue: {fatigue:.2f} (≤{self.NEGATIVE_LOW})")
-            reasoning.append(f"✅ Overload: {overload:.2f} (≤{self.NEGATIVE_LOW})")
-            reasoning.append(f"✅ Stress: {stress:.2f} (≤{self.NEGATIVE_LOW})")
-            reasoning.append("All parameters good → TAKEOFF to 1m")
+            reasoning.append(f"✅ Focus: {focus:.2f} (≥{self.FOCUS_HIGH}) - PRIMARY DETERMINANT")
+            reasoning.append(f"📊 Fatigue: {fatigue:.2f} (monitoring only)")
+            reasoning.append(f"📊 Overload: {overload:.2f} (monitoring only)")
+            reasoning.append(f"📊 Stress: {stress:.2f} (monitoring only)")
+            reasoning.append("High focus → TAKEOFF to 1m")
         
         elif all_bad:
-            # All parameters bad → different response if grounded vs airborne
+            # Low focus → different response if grounded vs airborne
             severity = "critical"
             
             if current_altitude <= 0.1:  # Already grounded
                 # Don't recommend any action, just inform that they need to regain focus
                 recommendations = []  # No action needed
-                reasoning.append(f"❌ Focus: {focus:.2f} (≤{self.FOCUS_LOW})")
-                reasoning.append(f"❌ Fatigue: {fatigue:.2f} (≥{self.NEGATIVE_HIGH})")
-                reasoning.append(f"❌ Overload: {overload:.2f} (≥{self.NEGATIVE_HIGH})")
-                reasoning.append(f"❌ Stress: {stress:.2f} (≥{self.NEGATIVE_HIGH})")
+                reasoning.append(f"❌ Focus: {focus:.2f} (≤{self.FOCUS_LOW}) - PRIMARY DETERMINANT")
+                reasoning.append(f"📊 Fatigue: {fatigue:.2f} (monitoring only)")
+                reasoning.append(f"📊 Overload: {overload:.2f} (monitoring only)")
+                reasoning.append(f"📊 Stress: {stress:.2f} (monitoring only)")
                 reasoning.append("🔴 Drone is GROUNDED - Regain focus to fly again")
                 severity = "grounded"  # Special status
             else:
-                # In air → LAND immediately
+                # In air → LAND immediately (low focus)
                 recommendations.append({
                     "action": "land",
-                    "reason": "All parameters critical - operator needs immediate support",
+                    "reason": "Low focus detected - operator needs to regain concentration",
                     "parameters": {},
                     "urgent": False  # Always ask for permission before landing
                 })
-                reasoning.append(f"❌ Focus: {focus:.2f} (≤{self.FOCUS_LOW})")
-                reasoning.append(f"❌ Fatigue: {fatigue:.2f} (≥{self.NEGATIVE_HIGH})")
-                reasoning.append(f"❌ Overload: {overload:.2f} (≥{self.NEGATIVE_HIGH})")
-                reasoning.append(f"❌ Stress: {stress:.2f} (≥{self.NEGATIVE_HIGH})")
-                reasoning.append("All parameters bad → LAND immediately")
+                reasoning.append(f"❌ Focus: {focus:.2f} (≤{self.FOCUS_LOW}) - PRIMARY DETERMINANT")
+                reasoning.append(f"📊 Fatigue: {fatigue:.2f} (monitoring only)")
+                reasoning.append(f"📊 Overload: {overload:.2f} (monitoring only)")
+                reasoning.append(f"📊 Stress: {stress:.2f} (monitoring only)")
+                reasoning.append("Low focus → LAND immediately")
         
         else:
-            # Mixed state → maintain altitude (no action)
+            # Mid-range focus (0.4 < focus < 0.6) → maintain altitude (no action)
             severity = "normal"
-            recommendations = []  # No action for mixed state
+            recommendations = []  # No action for mid-range focus
             
             if current_altitude > 0.1:
                 reasoning.append("✈️ Drone is in the air")
             else:
-                reasoning.append("⏸️ Drone on ground - waiting for optimal conditions")
+                reasoning.append("⏸️ Drone on ground - waiting for high focus")
             
-            reasoning.append(f"Focus: {focus:.2f}, Fatigue: {fatigue:.2f}, Overload: {overload:.2f}, Stress: {stress:.2f}")
+            reasoning.append(f"⚖️ Focus: {focus:.2f} (mid-range: {self.FOCUS_LOW} < focus < {self.FOCUS_HIGH})")
+            reasoning.append(f"📊 Fatigue: {fatigue:.2f}, Overload: {overload:.2f}, Stress: {stress:.2f} (monitoring only)")
         
         return {
             "severity": severity,

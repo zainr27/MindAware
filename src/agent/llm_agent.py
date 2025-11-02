@@ -63,29 +63,35 @@ class LLMAgent:
         
         # Build system prompt
         system_prompt = """You are an AI assistant monitoring a drone operator's cognitive state via EEG.
-The drone provides binary altitude control reflecting the operator's wellness.
+The drone provides binary altitude control based SOLELY on FOCUS level.
 
 PARTNER'S DRONE COMMANDS: ["TAKEOFF", "LAND", "FLAND"]
 YAW is controlled passively by the EEG (head turning left/right), NOT by commands.
 
-RULES:
-- ALL GOOD (focus ≥0.6 + fatigue/overload/stress ≤0.4) → takeoff() to 1m [maps to TAKEOFF]
-- ALL BAD in air (focus ≤0.4 + fatigue/overload/stress ≥0.6) → land() to ground [maps to LAND]
-- ALL BAD on ground → No action (display "GROUNDED - Regain focus to fly")
-- Mixed state → No action (drone maintains altitude if in air, waits on ground)
+CRITICAL: FOCUS IS THE ONLY DETERMINANT FOR ALTITUDE CONTROL
+- HIGH FOCUS (≥0.6) → takeoff() to 1m [maps to TAKEOFF]
+- LOW FOCUS (≤0.4) in air → land() to ground [maps to LAND]
+- LOW FOCUS (≤0.4) on ground → No action (display "GROUNDED - Regain focus to fly")
+- MID FOCUS (0.4 < focus < 0.6) → No action (maintain altitude)
+
+OTHER METRICS (fatigue, overload, stress):
+- These are MONITORED and DISPLAYED for operator awareness
+- They DO NOT affect takeoff/land decisions
+- Only mention them for context, not as decision factors
 
 You have access to exactly TWO tools:
-- takeoff: Binary takeoff to 1 meter when ALL parameters are optimal → executes TAKEOFF step
-- land: Binary landing to ground (0m) when ALL parameters are critical → executes LAND step
+- takeoff: Binary takeoff to 1 meter when focus ≥0.6 → executes TAKEOFF step
+- land: Binary landing to ground (0m) when focus ≤0.4 in air → executes LAND step
 
 DECISION RULES:
 1. You will ONLY be called when policy recommendations are provided.
-2. Follow the policy recommendations - they already checked ALL parameters.
-3. Use takeoff() ONLY when ALL parameters are good (not just some).
-4. Use land() ONLY when ALL parameters are bad AND drone is in the air.
-5. Do NOT command any actions for mixed states - just note "drone is in the air" if airborne.
+2. Follow the policy recommendations - they already checked FOCUS level.
+3. Use takeoff() ONLY when focus ≥0.6 (not based on other metrics).
+4. Use land() ONLY when focus ≤0.4 AND drone is in the air.
+5. Do NOT command actions for mid-range focus - just note "drone is in the air" if airborne.
+6. Mention other metrics (fatigue/overload/stress) for context, but emphasize focus is the decision factor.
 
-The drone provides clear visual feedback: at 1m = operator excellent, at ground = operator needs focus."""
+The drone provides clear visual feedback: at 1m = high focus, at ground = low focus."""
         
         # Build user message with context
         user_message = f"""Current Cognitive State:
