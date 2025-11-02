@@ -230,11 +230,11 @@ async def get_memory():
 
 @app.get("/tools/status")
 async def get_tools_status():
-    """Get current tool states."""
+    """Get current tool states (drone altitude and rotation)."""
+    status = tools.get_status()
     return {
-        "current_mode": tools.current_mode,
-        "current_pattern": tools.current_pattern,
-        "alert_level": tools.alert_level,
+        "current_altitude": status.get("altitude_m", 0.0),
+        "current_rotation": status.get("rotation_deg", 0.0),
         "action_count": len(tools.action_history)
     }
 

@@ -25,13 +25,13 @@ from src.api import setup_websocket_routes, broadcast_cognitive_state, broadcast
 class MindAwareAgent:
     """Main agent orchestrator."""
     
-    def __init__(self, scenario: str = "normal", use_llm: bool = False, use_real_eeg: bool = False):
+    def __init__(self, scenario: str = "normal", use_llm: bool = True, use_real_eeg: bool = False):
         """
         Initialize the agent system.
         
         Args:
             scenario: EEG simulation scenario (if not using real EEG)
-            use_llm: Whether to use LLM reasoning (requires API key)
+            use_llm: Whether to use LLM reasoning (default: True, requires API key)
             use_real_eeg: Whether to use real EEG hardware (via API ingestion)
         """
         print("[INIT] Initializing MindAware Agent...")
@@ -44,27 +44,31 @@ class MindAwareAgent:
         self.use_llm = use_llm
         self.use_real_eeg = use_real_eeg
         
-        # Initialize voice confirmation (independent of LLM)
+        # Initialize voice confirmation (always enabled if available)
         try:
-            from agent.voice_confirmer import VoiceConfirmer
+            from src.agent.voice_confirmer import VoiceConfirmer
             self.voice_confirmer = VoiceConfirmer()
-            print("[INIT] Voice confirmation system initialized")
+            if self.voice_confirmer.enabled:
+                print("[INIT] ✅ Voice confirmation system initialized and enabled")
+            else:
+                print("[INIT] ⚠️  Voice confirmation initialized but disabled")
         except Exception as e:
-            print(f"[INIT] Voice confirmation unavailable: {e}")
+            print(f"[INIT] ⚠️  Voice confirmation unavailable: {e}")
             self.voice_confirmer = None
         
+        # Initialize LLM agent (enabled by default)
         if use_llm:
             try:
                 self.llm_agent = LLMAgent(self.tools, self.memory)
-                print("[INIT] LLM agent enabled (using OpenAI API)")
+                print("[INIT] ✅ LLM agent enabled (using OpenAI API)")
             except ValueError as e:
-                print(f"[INIT] Could not initialize LLM agent: {e}")
+                print(f"[INIT] ⚠️  Could not initialize LLM agent: {e}")
                 print("[INIT] Falling back to policy-only mode")
                 self.llm_agent = None
                 self.use_llm = False
         else:
             self.llm_agent = None
-            print("[INIT] Running in policy-only mode (no LLM)")
+            print("[INIT] LLM disabled (policy-only mode)")
         
         # EEG Source (real hardware or simulator)
         if use_real_eeg:
@@ -94,15 +98,37 @@ class MindAwareAgent:
         # Add to memory
         self.memory.add_cognitive_state(cognitive_state)
         
-        # Get policy recommendations
-        policy_result = self.policy.evaluate(cognitive_state)
+        # Get policy recommendations (pass current altitude for grounded check)
+        current_altitude = self.tools.get_status()["altitude_m"]
+        policy_result = self.policy.evaluate(cognitive_state, current_altitude)
         
         print(f"\n[POLICY] Severity: {policy_result['severity']}")
         print(f"[POLICY] Recommendations: {len(policy_result['recommendations'])}")
         
-        # GUARD: If normal operation with no recommendations, maintain current state
-        if policy_result['severity'] == 'normal' and len(policy_result['recommendations']) == 0:
-            print("[AGENT] Normal operation - maintaining current state, no actions needed")
+        # GUARD: If normal/grounded operation with no recommendations, maintain current state
+        if (policy_result['severity'] in ['normal', 'grounded']) and len(policy_result['recommendations']) == 0:
+            if policy_result['severity'] == 'grounded':
+                print("[AGENT] 🔴 Drone GROUNDED - Regain focus to fly again")
+                # Voice announcement for grounded state
+                if self.voice_confirmer:
+                    self.voice_confirmer.announce_status(
+                        "Drone is grounded. All parameters are critical. Regain focus to fly again."
+                    )
+            else:
+                if current_altitude > 0.1:
+                    print("[AGENT] ✈️ Drone is in the air (mixed parameters)")
+                    # Voice announcement for in-air status
+                    if self.voice_confirmer:
+                        self.voice_confirmer.announce_status(
+                            "Drone is in the air. Mixed parameters detected. Maintaining altitude."
+                        )
+                else:
+                    print("[AGENT] ⏸️ Drone on ground - waiting for optimal conditions")
+                    # Voice announcement for waiting on ground
+                    if self.voice_confirmer:
+                        self.voice_confirmer.announce_status(
+                            "Drone is on the ground. Waiting for optimal conditions to take off."
+                        )
             
             decision = {
                 "cognitive_state": cognitive_state,
@@ -125,30 +151,35 @@ class MindAwareAgent:
                 cognitive_state,
                 policy_result["recommendations"]
             )
+            
+            # Apply voice confirmation to LLM decisions
+            if self.voice_confirmer and self.voice_confirmer.enabled and decision.get('actions_taken'):
+                decision['actions_taken'] = self._apply_voice_confirmation(
+                    decision['actions_taken'],
+                    cognitive_state
+            )
         else:
             # Fallback to policy-only mode (but still with voice confirmation if enabled)
             actions_taken = []
             
             for rec in policy_result["recommendations"][:2]:  # Take top 2
-                # Voice handling: inform for takeoff, confirm for landing
+                action = rec["action"]
+                is_urgent = rec.get("urgent", False)
+                needs_confirmation = True
+                
+                # Check voice confirmation before executing
                 if self.voice_confirmer and self.voice_confirmer.enabled:
-                    action = rec["action"]
-                    is_urgent = rec.get("urgent", False)
-                    
-                    if action == "takeoff" and is_urgent:
-                        # Automatic takeoff - just inform pilot
-                        self.voice_confirmer.inform_pilot(action, cognitive_state)
-                    elif action == "land" and not is_urgent:
-                        # Landing requires confirmation
+                    if is_urgent:
+                        print(f"[VOICE] Bypassing confirmation for urgent action: {action}")
+                        needs_confirmation = True  # Execute urgent actions
+                    else:
                         print(f"[VOICE] Requesting confirmation for: {action}")
-                        
                         confirmed = self.voice_confirmer.ask_confirmation(
                             action=action,
                             context=cognitive_state
                         )
-                        
                         if not confirmed:
-                            print(f"[VOICE] User denied {action}")
+                            print(f"[VOICE] ❌ User denied {action}")
                             actions_taken.append({
                                 "tool": action,
                                 "arguments": rec.get("parameters", {}),
@@ -156,21 +187,19 @@ class MindAwareAgent:
                                 "reason": rec["reason"],
                                 "voice_confirmed": False
                             })
-                            continue  # Skip this action
-                        
-                        print(f"[VOICE] User confirmed {action}")
-                    elif is_urgent:
-                        # Other urgent actions bypass voice
-                        print(f"[VOICE] Bypassing voice for urgent action: {action}")
+                            continue  # Skip executing this action
+                        print(f"[VOICE] ✅ User confirmed {action}")
+                        needs_confirmation = True
                 
-                # Execute the tool
-                result = self.tools.execute_tool(rec["action"], rec.get("parameters", {}))
+                # Execute the tool (only if confirmed or urgent)
+                if needs_confirmation:
+                    result = self.tools.execute_tool(action, rec.get("parameters", {}))
                 actions_taken.append({
-                    "tool": rec["action"],
-                    "arguments": rec.get("parameters", {}),
+                        "tool": action,
+                        "arguments": rec.get("parameters", {}),
                     "result": result,
-                    "reason": rec["reason"],
-                    "voice_confirmed": self.voice_confirmer.enabled if self.voice_confirmer else False
+                        "reason": rec["reason"],
+                        "voice_confirmed": self.voice_confirmer.enabled if self.voice_confirmer else False
                 })
             
             decision = {
@@ -215,6 +244,54 @@ class MindAwareAgent:
         print(f"[DECISION] Actions taken: {len(decision['actions_taken'])}")
         
         return decision
+    
+    def _apply_voice_confirmation(self, actions_taken: list, cognitive_state: dict) -> list:
+        """
+        Apply voice confirmation to actions.
+        Returns filtered list of confirmed actions.
+        
+        Args:
+            actions_taken: List of actions from decision
+            cognitive_state: Current cognitive state for context
+            
+        Returns:
+            List of confirmed actions (denied actions are removed)
+        """
+        if not self.voice_confirmer or not self.voice_confirmer.enabled:
+            return actions_taken
+        
+        confirmed_actions = []
+        
+        for action in actions_taken:
+            tool_name = action.get('tool', '')
+            is_urgent = action.get('result', {}).get('urgent', False)
+            
+            # Urgent actions (like emergency landing) bypass confirmation
+            if is_urgent:
+                print(f"[VOICE] Bypassing confirmation for urgent action: {tool_name}")
+                confirmed_actions.append(action)
+                continue
+            
+            # Request confirmation for all non-urgent actions
+            print(f"[VOICE] Requesting confirmation for: {tool_name}")
+            
+            confirmed = self.voice_confirmer.ask_confirmation(
+                action=tool_name,
+                context=cognitive_state
+            )
+            
+            if confirmed:
+                print(f"[VOICE] ✅ User confirmed {tool_name}")
+                action['voice_confirmed'] = True
+                confirmed_actions.append(action)
+            else:
+                print(f"[VOICE] ❌ User denied {tool_name}")
+                action['voice_confirmed'] = False
+                action['result'] = {"cancelled": True, "reason": "User denied via voice"}
+                # Still add to list for logging, but mark as cancelled
+                confirmed_actions.append(action)
+        
+        return confirmed_actions
     
     async def _broadcast_updates(self, cognitive_state: dict, telemetry: dict, decision: dict):
         """Broadcast updates to WebSocket clients."""
@@ -268,9 +345,9 @@ class MindAwareAgent:
                     if action['tool'] in ['takeoff', 'land']:
                         new_altitude = action['result'].get('new_altitude_m', 0)
                         self.drone_sim.update_altitude(new_altitude)
-                    elif action['tool'] == 'yaw_right':
-                        new_rotation = action['result'].get('new_rotation_deg', 0)
-                        self.drone_sim.update_rotation(new_rotation)
+                    elif action['tool'] == 'maintain_altitude':
+                        # No action needed - altitude maintained
+                        pass  # Yaw controlled by EEG
             
             # Broadcast to WebSocket (run in background)
             asyncio.run(self._broadcast_updates(cognitive_state, telemetry, decision))
@@ -289,6 +366,83 @@ class MindAwareAgent:
         print(f"{'='*60}\n")
         
         # Print summary
+        self.print_summary()
+    
+    def run_real_eeg_loop(self, interval: float = 3.0):
+        """
+        Run continuous loop for real EEG data.
+        Processes incoming EEG data from hardware indefinitely.
+        
+        Args:
+            interval: Seconds between processing cycles
+        """
+        print(f"\n{'='*60}")
+        print("STARTING REAL EEG LOOP")
+        print(f"{'='*60}\n")
+        print("[INFO] Waiting for EEG data from hardware...")
+        print("[INFO] Partner should POST to /eeg/ingest endpoint")
+        print(f"[INFO] Processing every {interval} seconds\n")
+        
+        iteration = 0
+        
+        try:
+            while True:
+                iteration += 1
+                print(f"\n{'─'*60}")
+                print(f"CYCLE {iteration} - Processing Real EEG Data")
+                print(f"{'─'*60}")
+                
+                # Get cognitive state from real EEG adapter
+                cognitive_state = self.eeg_sim.get_cognitive_state()
+                
+                # Check if we have enough data
+                if cognitive_state.get('status') == 'insufficient_data':
+                    print(f"[WAIT] Waiting for more EEG data... ({cognitive_state.get('buffer_size', 0)} readings)")
+                    time.sleep(interval)
+                    continue
+                
+                print(f"\n[EEG] Focus: {cognitive_state['focus']:.3f} | "
+                      f"Fatigue: {cognitive_state['fatigue']:.3f} | "
+                      f"Overload: {cognitive_state['overload']:.3f} | "
+                      f"Stress: {cognitive_state['stress']:.3f}")
+                print(f"[EEG] Calibrated: {cognitive_state.get('calibrated', False)} | "
+                      f"Buffer: {cognitive_state.get('buffer_size', 0)} readings")
+                
+                # Get drone telemetry
+                telemetry = self.drone_sim.get_telemetry()
+                print(f"[DRONE] Altitude: {telemetry['altitude_m']:.2f}m | "
+                      f"Rotation: {telemetry['rotation_deg']:.0f}° | "
+                      f"Battery: {telemetry['battery']}%")
+                
+                # Process through agent
+                decision = self.process_cognitive_state(cognitive_state)
+                
+                # Update drone based on actions
+                if decision['actions_taken']:
+                    for action in decision['actions_taken']:
+                        # Update drone simulator to match tool actions
+                        if action['tool'] in ['takeoff', 'land']:
+                            new_altitude = action['result'].get('new_altitude_m', 0)
+                            self.drone_sim.update_altitude(new_altitude)
+                        elif action['tool'] == 'maintain_altitude':
+                            # No action needed - altitude maintained
+                            pass  # Yaw controlled by EEG
+                
+                # Broadcast to WebSocket
+                asyncio.run(self._broadcast_updates(cognitive_state, telemetry, decision))
+                
+                print(f"\n[STATUS] Altitude: {self.drone_sim.get_altitude():.2f}m | "
+                      f"Rotation: {self.drone_sim.get_rotation():.0f}°")
+                print(f"[STATUS] Memory: {len(self.memory.cognitive_history)} states, "
+                      f"{len(self.memory.decision_history)} decisions")
+                
+                # Sleep before next cycle
+                time.sleep(interval)
+        
+        except KeyboardInterrupt:
+            print(f"\n\n{'='*60}")
+            print("REAL EEG LOOP STOPPED")
+            print(f"{'='*60}\n")
         self.print_summary()
     
     def print_summary(self):
@@ -335,9 +489,9 @@ async def run_with_websocket(agent: MindAwareAgent, iterations: int = 20, interv
                 if action['tool'] in ['takeoff', 'land']:
                     new_altitude = action['result'].get('new_altitude_m', 0)
                     agent.drone_sim.update_altitude(new_altitude)
-                elif action['tool'] == 'yaw_right':
-                    new_rotation = action['result'].get('new_rotation_deg', 0)
-                    agent.drone_sim.update_rotation(new_rotation)
+                elif action['tool'] == 'maintain_altitude':
+                    # No action needed - altitude maintained
+                    pass  # Yaw controlled by EEG
         
         # Get updated telemetry
         telemetry = agent.drone_sim.get_telemetry()
@@ -354,6 +508,8 @@ async def run_with_websocket(agent: MindAwareAgent, iterations: int = 20, interv
 def main():
     """Main entry point."""
     import argparse
+    import threading
+    import uvicorn
     
     parser = argparse.ArgumentParser(description="MindAware Agent System")
     parser.add_argument("--scenario", default="normal", 
@@ -363,28 +519,33 @@ def main():
                        help="Number of simulation iterations")
     parser.add_argument("--interval", type=float, default=3.0,
                        help="Seconds between iterations")
-    parser.add_argument("--llm", action="store_true",
-                       help="Enable LLM reasoning (requires OPENAI_API_KEY)")
+    parser.add_argument("--no-llm", action="store_true",
+                       help="Disable LLM reasoning (default: enabled, requires OPENAI_API_KEY)")
     parser.add_argument("--real-eeg", action="store_true",
                        help="Use real EEG hardware (data via /eeg/ingest API)")
     parser.add_argument("--no-sim", action="store_true",
                        help="Skip simulation (for API-only mode)")
+    parser.add_argument("--api-port", type=int, default=8000,
+                       help="Port for API server (default: 8000)")
     
     args = parser.parse_args()
     
+    # Determine LLM usage (enabled by default, disabled with --no-llm)
+    use_llm = not args.no_llm
+    
     # Check for API key if LLM mode
-    if args.llm:
+    if use_llm:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             print("\n⚠️  WARNING: OPENAI_API_KEY not set")
             print("   LLM reasoning will fall back to policy-only mode")
             print("   Set your API key: export OPENAI_API_KEY=sk-...\n")
     
-    # Create agent
+    # Create agent (LLM enabled by default, voice confirmation always attempted)
     try:
         agent = MindAwareAgent(
             scenario=args.scenario, 
-            use_llm=args.llm,
+            use_llm=use_llm,
             use_real_eeg=args.real_eeg
         )
     except ValueError as e:
@@ -396,15 +557,49 @@ def main():
             use_real_eeg=args.real_eeg
         )
     
+    # Start API server in background thread (for real EEG mode or API-only mode)
+    if args.real_eeg or args.no_sim:
+        print(f"\n🚀 Starting API server on port {args.api_port}...")
+        
+        # Share agent's tools instance with API server
+        def run_api():
+            from src.api import server
+            # Replace API's tools instance with agent's (so they share state)
+            server.tools = agent.tools
+            server.memory = agent.memory
+            server.logger = agent.logger
+            server.policy = agent.policy
+            uvicorn.run(server.app, host="127.0.0.1", port=args.api_port, log_level="info")
+        
+        api_thread = threading.Thread(target=run_api, daemon=True)
+        api_thread.start()
+        
+        # Give API server a moment to start
+        time.sleep(2)
+        print(f"✅ API server running at http://127.0.0.1:{args.api_port}")
+        print(f"   EEG endpoint: http://127.0.0.1:{args.api_port}/eeg/ingest")
+        print(f"   Command endpoint: http://127.0.0.1:{args.api_port}/drone/command\n")
+    
     # Run simulation if not skipped
     if not args.no_sim:
-        agent.run_simulation_loop(
-            iterations=args.iterations,
-            interval=args.interval
-        )
+        if args.real_eeg:
+            # Real EEG mode: continuous loop processing hardware data
+            agent.run_real_eeg_loop(interval=args.interval)
+        else:
+            # Simulation mode: fixed iterations
+            agent.run_simulation_loop(
+                iterations=args.iterations,
+                interval=args.interval
+            )
     else:
         print("\n[INFO] Simulation skipped. Agent ready for API requests.")
         print("[INFO] Use POST /agent endpoint to process cognitive states.")
+        print("[INFO] Press Ctrl+C to stop.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\n[INFO] Shutting down...")
 
 
 if __name__ == "__main__":

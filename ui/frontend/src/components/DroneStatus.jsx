@@ -11,7 +11,13 @@ function DroneStatus({ telemetry }) {
     )
   }
 
-  const { altitude_m, rotation_deg, battery, mission_progress, status } = telemetry
+  const { 
+    altitude_m = 0, 
+    rotation_deg = 0, 
+    battery = 100, 
+    mission_progress = 0, 
+    status = 'active' 
+  } = telemetry || {}
 
   const getBatteryColor = (battery) => {
     if (battery > 50) return '#10b981'
@@ -32,13 +38,6 @@ function DroneStatus({ telemetry }) {
     return '#fbbf24' // Yellow - transitioning
   }
 
-  const getRotationState = (rotation) => {
-    // Normalize rotation to 0-180 range for display
-    const normalized = rotation % 360
-    if (normalized > 170 && normalized < 190) return 'TURNED_AROUND'
-    if (normalized < 10 || normalized > 350) return 'FORWARD'
-    return 'TURNING'
-  }
 
   const getStatusBadge = (status) => {
     if (status === 'active') return 'status-active'
@@ -46,8 +45,12 @@ function DroneStatus({ telemetry }) {
     return 'status-error'
   }
 
-  const binaryState = getBinaryState(altitude_m)
-  const rotationState = getRotationState(rotation_deg)
+  // Ensure values are numbers
+  const altitude = parseFloat(altitude_m) || 0
+  const bat = parseFloat(battery) || 100
+  const mission = parseFloat(mission_progress) || 0
+  
+  const binaryState = getBinaryState(altitude)
 
   return (
     <div className="card drone-card">
@@ -58,7 +61,7 @@ function DroneStatus({ telemetry }) {
         <div 
           className={`binary-state-badge binary-state-${binaryState.toLowerCase()}`}
           style={{ 
-            backgroundColor: getBinaryStateColor(altitude_m),
+            backgroundColor: getBinaryStateColor(altitude),
             fontSize: '1.5rem',
             fontWeight: 'bold',
             padding: '1rem',
@@ -68,76 +71,61 @@ function DroneStatus({ telemetry }) {
             boxShadow: `0 4px 20px ${getBinaryStateColor(altitude_m)}40`
           }}
         >
-          {binaryState === 'TAKEOFF' && '✈️ TAKEOFF - ALL PARAMETERS OPTIMAL'}
-          {binaryState === 'GROUND' && '🔴 GROUNDED - ALL PARAMETERS CRITICAL'}
-          {binaryState === 'TRANSITION' && '⚡ TRANSITIONING...'}
+          {binaryState === 'TAKEOFF' && '✈️ DRONE IN THE AIR'}
+          {binaryState === 'GROUND' && '🔴 GROUNDED'}
+          {binaryState === 'TRANSITION' && '⏸️ WAITING FOR DECISION'}
         </div>
         
         {/* Visual representation of binary states */}
         <div className="binary-visual" style={{ 
           display: 'flex', 
-          gap: '1rem', 
+          gap: '2rem', 
           marginBottom: '1.5rem',
           justifyContent: 'center'
         }}>
           <div style={{ 
             textAlign: 'center', 
-            padding: '1rem',
-            backgroundColor: altitude_m >= 0.9 ? '#10b98140' : '#1f293740',
-            borderRadius: '8px',
-            border: altitude_m >= 0.9 ? '2px solid #10b981' : '2px solid transparent',
-            flex: 1
+            padding: '1.5rem',
+            backgroundColor: altitude >= 0.9 ? '#10b98140' : '#1f293740',
+            borderRadius: '12px',
+            border: altitude >= 0.9 ? '3px solid #10b981' : '2px solid transparent',
+            flex: 1,
+            maxWidth: '200px'
           }}>
-            <div style={{ fontSize: '2rem' }}>✅</div>
-            <div style={{ fontWeight: 'bold', color: '#10b981' }}>1.0m</div>
-            <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>All Good</div>
+            <div style={{ fontSize: '3rem' }}>✈️</div>
+            <div style={{ fontWeight: 'bold', color: '#10b981', fontSize: '1.2rem', marginTop: '0.5rem' }}>IN THE AIR</div>
+            <div style={{ fontSize: '1rem', opacity: 0.7, marginTop: '0.3rem' }}>1.0m altitude</div>
+            <div style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: '0.3rem' }}>All parameters optimal</div>
           </div>
           
           <div style={{ 
             textAlign: 'center', 
-            padding: '1rem',
-            backgroundColor: rotationState === 'TURNED_AROUND' ? '#fbbf2440' : '#1f293740',
-            borderRadius: '8px',
-            border: rotationState === 'TURNED_AROUND' ? '2px solid #fbbf24' : '2px solid transparent',
-            flex: 1
+            padding: '1.5rem',
+            backgroundColor: altitude <= 0.1 ? '#ef444440' : '#1f293740',
+            borderRadius: '12px',
+            border: altitude <= 0.1 ? '3px solid #ef4444' : '2px solid transparent',
+            flex: 1,
+            maxWidth: '200px'
           }}>
-            <div style={{ fontSize: '2rem' }}>🔄</div>
-            <div style={{ fontWeight: 'bold', color: '#fbbf24' }}>180°</div>
-            <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Mixed State</div>
-          </div>
-          
-          <div style={{ 
-            textAlign: 'center', 
-            padding: '1rem',
-            backgroundColor: altitude_m <= 0.1 ? '#ef444440' : '#1f293740',
-            borderRadius: '8px',
-            border: altitude_m <= 0.1 ? '2px solid #ef4444' : '2px solid transparent',
-            flex: 1
-          }}>
-            <div style={{ fontSize: '2rem' }}>🔴</div>
-            <div style={{ fontWeight: 'bold', color: '#ef4444' }}>0.0m</div>
-            <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>All Bad</div>
+            <div style={{ fontSize: '3rem' }}>🔴</div>
+            <div style={{ fontWeight: 'bold', color: '#ef4444', fontSize: '1.2rem', marginTop: '0.5rem' }}>GROUNDED</div>
+            <div style={{ fontSize: '1rem', opacity: 0.7, marginTop: '0.3rem' }}>0.0m altitude</div>
+            <div style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: '0.3rem' }}>Regain focus to fly</div>
           </div>
         </div>
       </div>
 
       {/* Current Values */}
-      <div className="telemetry-grid" style={{ marginBottom: '1.5rem' }}>
+      <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
         <div className="telemetry-item">
-          <span className="telemetry-label">Current Altitude</span>
+          <span className="telemetry-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Current Altitude</span>
           <span className="telemetry-value" style={{ 
-            color: getBinaryStateColor(altitude_m),
-            fontSize: '1.5rem',
-            fontWeight: 'bold'
+            color: getBinaryStateColor(altitude),
+            fontSize: '2rem',
+            fontWeight: 'bold',
+            display: 'block'
           }}>
-            {altitude_m.toFixed(2)}m
-          </span>
-        </div>
-
-        <div className="telemetry-item">
-          <span className="telemetry-label">Current Rotation</span>
-          <span className="telemetry-value" style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-            {rotation_deg.toFixed(0)}°
+            {altitude.toFixed(2)}m
           </span>
         </div>
       </div>
@@ -167,7 +155,7 @@ function DroneStatus({ telemetry }) {
           <div style={{ 
             height: `${Math.min(altitude_m * 80, 100)}%`,
             width: '60px',
-            backgroundColor: getBinaryStateColor(altitude_m),
+            backgroundColor: getBinaryStateColor(altitude),
             borderRadius: '8px 8px 0 0',
             display: 'flex',
             alignItems: 'center',
@@ -181,44 +169,16 @@ function DroneStatus({ telemetry }) {
         </div>
       </div>
 
-      {/* Rotation Compass - Enhanced */}
-      <div className="rotation-indicator" style={{ marginBottom: '1.5rem' }}>
-        <div className="indicator-label" style={{ marginBottom: '0.5rem', fontWeight: 'bold' }}>
-          Rotation State: {rotationState}
-        </div>
-        <div className="rotation-compass" style={{ 
-          width: '100px', 
-          height: '100px', 
-          margin: '0 auto',
-          border: '3px solid #4a5568',
-          borderRadius: '50%',
-          position: 'relative',
-          backgroundColor: rotationState === 'TURNED_AROUND' ? '#fbbf2420' : '#1a202c'
-        }}>
-          {/* Cardinal directions */}
-          <div style={{ position: 'absolute', top: '5px', left: '50%', transform: 'translateX(-50%)', fontSize: '0.7rem', opacity: 0.5 }}>N</div>
-          <div style={{ position: 'absolute', bottom: '5px', left: '50%', transform: 'translateX(-50%)', fontSize: '0.7rem', opacity: 0.5 }}>S</div>
-          <div style={{ position: 'absolute', left: '5px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.7rem', opacity: 0.5 }}>W</div>
-          <div style={{ position: 'absolute', right: '5px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.7rem', opacity: 0.5 }}>E</div>
-          
-          {/* Rotating arrow */}
-          <div 
-            className="rotation-arrow"
-            style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: `translate(-50%, -50%) rotate(${rotation_deg}deg)`,
-              transition: 'transform 0.5s ease',
-              fontSize: '2.5rem',
-              transformOrigin: 'center'
-            }}
-          >
-            ↑
-          </div>
-        </div>
-        <div style={{ textAlign: 'center', marginTop: '0.5rem', fontSize: '0.9rem', opacity: 0.7 }}>
-          {rotation_deg.toFixed(0)}° from North
+      {/* Operator Feedback Note */}
+      <div style={{ 
+        marginBottom: '1.5rem', 
+        padding: '1rem', 
+        backgroundColor: '#1f293740',
+        borderRadius: '8px',
+        textAlign: 'center'
+      }}>
+        <div style={{ fontSize: '0.9rem', opacity: 0.8, fontStyle: 'italic' }}>
+          💡 Yaw (rotation) is controlled by head movement via EEG
         </div>
       </div>
 
@@ -230,14 +190,14 @@ function DroneStatus({ telemetry }) {
             <div
               className="battery-fill"
               style={{
-                width: `${battery}%`,
+                width: `${bat}%`,
                 height: '100%',
-                backgroundColor: getBatteryColor(battery),
+                backgroundColor: getBatteryColor(bat),
                 transition: 'width 0.3s ease'
               }}
             />
           </div>
-          <div style={{ textAlign: 'center', marginTop: '0.3rem', fontSize: '0.9rem' }}>{battery.toFixed(0)}%</div>
+          <div style={{ textAlign: 'center', marginTop: '0.3rem', fontSize: '0.9rem' }}>{bat.toFixed(0)}%</div>
         </div>
         
         <div>
@@ -246,14 +206,14 @@ function DroneStatus({ telemetry }) {
             <div
               className="mission-fill"
               style={{ 
-                width: `${mission_progress}%`,
+                width: `${mission}%`,
                 height: '100%',
                 backgroundColor: '#3b82f6',
                 transition: 'width 0.3s ease'
               }}
             />
           </div>
-          <div style={{ textAlign: 'center', marginTop: '0.3rem', fontSize: '0.9rem' }}>{mission_progress.toFixed(0)}%</div>
+          <div style={{ textAlign: 'center', marginTop: '0.3rem', fontSize: '0.9rem' }}>{mission.toFixed(0)}%</div>
         </div>
       </div>
 
@@ -261,15 +221,15 @@ function DroneStatus({ telemetry }) {
       <div className="wellness-indicator" style={{ 
         marginTop: '1.5rem', 
         padding: '1rem', 
-        backgroundColor: `${getBinaryStateColor(altitude_m)}20`,
+        backgroundColor: `${getBinaryStateColor(altitude)}20`,
         borderRadius: '8px',
-        border: `2px solid ${getBinaryStateColor(altitude_m)}`
+        border: `2px solid ${getBinaryStateColor(altitude)}`
       }}>
         <div className="indicator-label" style={{ marginBottom: '0.5rem' }}>Operator Cognitive State</div>
         <div className="wellness-text" style={{ fontSize: '1.2rem', fontWeight: 'bold', textAlign: 'center' }}>
-          {altitude_m >= 0.9 && <span style={{ color: '#10b981' }}>🟢 EXCELLENT - All Parameters Optimal</span>}
-          {altitude_m <= 0.1 && <span style={{ color: '#ef4444' }}>🔴 CRITICAL - All Parameters Degraded</span>}
-          {altitude_m > 0.1 && altitude_m < 0.9 && <span style={{ color: '#fbbf24' }}>🟡 MIXED - Some Parameters Off</span>}
+          {altitude >= 0.9 && <span style={{ color: '#10b981' }}>🟢 All Parameters Optimal</span>}
+          {altitude <= 0.1 && <span style={{ color: '#ef4444' }}>🔴 Regain Focus to Fly</span>}
+          {altitude > 0.1 && altitude < 0.9 && <span style={{ color: '#fbbf24' }}>⏸️ Waiting for Decision</span>}
         </div>
       </div>
     </div>

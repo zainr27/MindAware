@@ -6,7 +6,7 @@ function ConnectionStatus({ connected }) {
     <div className="connection-status">
       <div className={`connection-dot ${connected ? 'connected' : 'disconnected'}`} />
       <span className="connection-text">
-        {connected ? 'Connected' : 'Disconnected'}
+        {connected ? 'Polling EEG Data' : 'Disconnected'}
       </span>
     </div>
   )

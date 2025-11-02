@@ -16,81 +16,149 @@ function App() {
   const [decisions, setDecisions] = useState([])
   const [connected, setConnected] = useState(false)
   const [history, setHistory] = useState([])
-  const wsRef = useRef(null)
+  const pollingIntervalRef = useRef(null)
   const maxHistory = 20
+  const POLL_INTERVAL = 500 // Poll every 500ms for real-time updates
 
   useEffect(() => {
-    connectWebSocket()
+    console.log('🚀 Starting MindAware UI polling...')
+    
+    // Test connection immediately
+    fetch('http://127.0.0.1:8000/health')
+      .then(res => res.json())
+      .then(data => console.log('✅ API connection test:', data))
+      .catch(err => console.error('❌ API connection failed:', err))
+    
+    startPolling()
     fetchInitialData()
     
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close()
-      }
+      stopPolling()
     }
   }, [])
 
-  const connectWebSocket = () => {
-    const ws = new WebSocket('ws://localhost:8000/ws')
+  const startPolling = () => {
+    // Immediate first poll
+    pollEEGData()
     
-    ws.onopen = () => {
-      console.log('WebSocket connected')
-      setConnected(true)
-      ws.send(JSON.stringify({ command: 'subscribe', channel: 'all' }))
+    // Set up polling interval
+    pollingIntervalRef.current = setInterval(() => {
+      pollEEGData()
+    }, POLL_INTERVAL)
+  }
+
+  const stopPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
     }
-    
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data)
+  }
+
+  const pollEEGData = async () => {
+    try {
+      // Poll the EEG state endpoint - gets actual values from main.py's adapter
+      const response = await fetch('/api/eeg/state')
       
-      switch (message.type) {
-        case 'cognitive_state':
-          setCognitiveState(message.data)
+      if (response.ok) {
+        const data = await response.json()
+        console.log('📊 EEG Data received:', data) // Debug log
+        
+        // Extract cognitive state from EEG adapter response (actual values from main.py)
+        if (data.focus !== undefined) {
+          const cognitiveState = {
+            focus: parseFloat(data.focus) || 0,
+            fatigue: parseFloat(data.fatigue) || 0,
+            overload: parseFloat(data.overload) || 0,
+            stress: parseFloat(data.stress) || 0
+          }
+          
+          console.log('✅ Setting cognitive state:', cognitiveState) // Debug log
+          setCognitiveState(cognitiveState)
           setHistory(prev => {
-            const newHistory = [...prev, message.data]
+            const newHistory = [...prev, cognitiveState]
             return newHistory.slice(-maxHistory)
           })
-          break
+        } else {
+          console.warn('⚠️ No focus field in response:', data)
+        }
         
-        case 'telemetry':
-          setTelemetry(message.data)
-          break
-        
-        case 'decision':
-          setDecisions(prev => [message.data, ...prev].slice(0, 10))
-          break
-        
-        case 'connection':
-          console.log('Connection status:', message.status)
-          break
-        
-        default:
-          console.log('Unknown message type:', message.type)
+        setConnected(true)
+      } else {
+        console.error('❌ Bad response:', response.status, response.statusText)
+        setConnected(false)
       }
-    }
-    
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error)
+    } catch (error) {
+      console.error('❌ Error polling EEG data:', error)
       setConnected(false)
     }
     
-    ws.onclose = () => {
-      console.log('WebSocket disconnected')
-      setConnected(false)
-      // Attempt reconnection after 5 seconds
-      setTimeout(connectWebSocket, 5000)
+    // Fetch drone telemetry (altitude, rotation)
+    try {
+      const telemetryResponse = await fetch('/api/tools/status')
+      if (telemetryResponse.ok) {
+        const telemetryData = await telemetryResponse.json()
+        console.log('🚁 Telemetry received:', telemetryData) // Debug log
+        // Convert to telemetry format expected by DroneStatus component
+        setTelemetry({
+          altitude_m: telemetryData.current_altitude || 0,
+          rotation_deg: telemetryData.current_rotation || 0,
+          battery: 100
+        })
+      } else {
+        console.error('❌ Bad telemetry response:', telemetryResponse.status)
+      }
+    } catch (error) {
+      console.error('❌ Error fetching telemetry:', error)
     }
     
-    wsRef.current = ws
+    // Fetch recent decisions (from main.py's logger)
+    try {
+      const logsResponse = await fetch('/api/logs?count=10')
+      if (logsResponse.ok) {
+        const logsData = await logsResponse.json()
+        console.log('📝 Logs received:', logsData.logs?.length || 0, 'decisions') // Debug log
+        setDecisions(logsData.logs || [])
+      } else {
+        console.error('❌ Bad logs response:', logsResponse.status)
+      }
+    } catch (error) {
+      console.error('❌ Error fetching decisions:', error)
+    }
   }
 
   const fetchInitialData = async () => {
+    console.log('📡 Fetching initial data...')
     try {
-      // Fetch recent logs
+      // Fetch recent logs using /api proxy
       const logsResponse = await fetch('/api/logs?count=5')
-      const logsData = await logsResponse.json()
-      setDecisions(logsData.logs || [])
+      if (logsResponse.ok) {
+        const logsData = await logsResponse.json()
+        console.log('✅ Initial logs loaded:', logsData.logs?.length || 0)
+        setDecisions(logsData.logs || [])
+      } else {
+        console.error('❌ Failed to fetch initial logs:', logsResponse.status)
+      }
     } catch (error) {
-      console.error('Error fetching initial data:', error)
+      console.error('❌ Error fetching initial data:', error)
+    }
+    
+    // Also fetch initial EEG state
+    try {
+      const eegResponse = await fetch('/api/eeg/state')
+      if (eegResponse.ok) {
+        const eegData = await eegResponse.json()
+        console.log('✅ Initial EEG state loaded:', eegData)
+        if (eegData.focus !== undefined) {
+          setCognitiveState({
+            focus: parseFloat(eegData.focus) || 0,
+            fatigue: parseFloat(eegData.fatigue) || 0,
+            overload: parseFloat(eegData.overload) || 0,
+            stress: parseFloat(eegData.stress) || 0
+          })
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error fetching initial EEG state:', error)
     }
   }
 
@@ -138,6 +206,23 @@ function App() {
       </header>
 
       <main className="main-content">
+        {/* Debug Panel - remove after testing */}
+        <div style={{ 
+          padding: '1rem', 
+          backgroundColor: '#1f2937', 
+          marginBottom: '1rem',
+          borderRadius: '8px',
+          fontSize: '0.85rem'
+        }}>
+          <strong>🔍 Debug Info:</strong>
+          <div>Connected: {connected ? '✅' : '❌'}</div>
+          <div>Focus: {cognitiveState.focus.toFixed(3)}</div>
+          <div>Fatigue: {cognitiveState.fatigue.toFixed(3)}</div>
+          <div>History: {history.length} points</div>
+          <div>Decisions: {decisions.length} entries</div>
+          <div>Telemetry: {telemetry ? `${telemetry.altitude_m}m, ${telemetry.rotation_deg}°` : 'null'}</div>
+        </div>
+        
         <div className="grid">
           <div className="card status-card">
             <h2>Binary Control Status</h2>

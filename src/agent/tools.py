@@ -1,8 +1,9 @@
 """
 Tool functions that the LLM agent can call to control the drone system.
-Binary control: TAKEOFF to 1m or LAND to ground. YAW RIGHT for mixed states.
+Binary control: TAKEOFF to 1m or LAND to ground.
 
-Partner's drone step names: ["TAKEOFF", "YAW RIGHT", "YAW CENTER", "LAND", "FLAND"]
+YAW is controlled passively by the EEG (head turning), not by commands.
+Partner's drone step names: ["TAKEOFF", "LAND", "FLAND"]
 """
 
 import json
@@ -10,13 +11,13 @@ from typing import Dict, Any
 
 
 class DroneTools:
-    """Binary drone control: TAKEOFF (1m), LAND (0m), or YAW RIGHT (rotate)."""
+    """Binary drone control: TAKEOFF (1m) or LAND (0m). Yaw controlled by EEG."""
     
     TAKEOFF_ALTITUDE = 1.0  # Takeoff altitude in meters
     
     def __init__(self):
         self.current_altitude = 0.0  # meters
-        self.current_rotation = 0.0  # degrees (0-360)
+        self.current_yaw = 0.0  # degrees (controlled by EEG, not commands)
         self.action_history = []
     
     def takeoff(self) -> Dict[str, Any]:
@@ -67,30 +68,24 @@ class DroneTools:
         
         return result
     
-    def yaw_right(self) -> Dict[str, Any]:
+    def maintain_altitude(self) -> Dict[str, Any]:
         """
-        Rotate drone to the right (yaw right command).
-        Used for mixed states or when nothing needs to change.
-        Partner's drone executes: "YAW RIGHT" step
+        Maintain current altitude (no action needed).
+        Used for mixed states when operator is neither all good nor all bad.
+        Yaw is controlled passively by EEG head position.
         
         Returns:
             Result dictionary
         """
-        old_rotation = self.current_rotation
-        # Yaw right by 90 degrees
-        self.current_rotation = (self.current_rotation + 90) % 360
-        
         result = {
             "success": True,
-            "action": "yaw_right",
-            "partner_command": "YAW RIGHT",
-            "previous_rotation_deg": round(old_rotation, 1),
-            "new_rotation_deg": round(self.current_rotation, 1),
-            "message": f"Drone yawed right 90° (from {old_rotation:.1f}° to {self.current_rotation:.1f}°)"
+            "action": "maintain_altitude",
+            "current_altitude_m": round(self.current_altitude, 2),
+            "message": f"Maintaining altitude at {self.current_altitude:.2f}m (mixed parameters)"
         }
         
         self.action_history.append(result)
-        print(f"[TOOL] yaw_right: {old_rotation:.1f}° → {self.current_rotation:.1f}°")
+        print(f"[TOOL] maintain_altitude: {self.current_altitude:.2f}m (no change)")
         
         return result
     
@@ -111,13 +106,13 @@ class DroneTools:
         elif tool_name == "land":
             return self.land()
         
-        elif tool_name == "yaw_right":
-            return self.yaw_right()
+        elif tool_name == "maintain_altitude":
+            return self.maintain_altitude()
         
         else:
             return {
                 "success": False,
-                "error": f"Unknown tool: {tool_name}. Available tools: takeoff, land, yaw_right"
+                "error": f"Unknown tool: {tool_name}. Available tools: takeoff, land, maintain_altitude"
             }
     
     def get_tool_definitions(self) -> list:
@@ -151,18 +146,6 @@ class DroneTools:
                         "required": []
                     }
                 }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "yaw_right",
-                    "description": "Execute YAW RIGHT command - drone rotates 90° to the right. Use when parameters are MIXED (some good, some bad) or when no altitude change is needed. Visual indicator only, maintains current altitude. Maps to partner's 'YAW RIGHT' step.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
-                }
             }
         ]
     
@@ -170,13 +153,17 @@ class DroneTools:
         """Get current drone state."""
         return {
             "altitude_m": round(self.current_altitude, 2),
-            "rotation_deg": round(self.current_rotation, 1),
+            "yaw_deg": round(self.current_yaw, 1),  # Read from EEG, not set by commands
             "total_actions": len(self.action_history)
         }
     
     def reset(self) -> None:
         """Reset drone to initial state."""
         self.current_altitude = 0.0
-        self.current_rotation = 0.0
+        self.current_yaw = 0.0
         self.action_history = []
         print("[TOOL] Drone reset to ground level")
+    
+    def update_yaw_from_eeg(self, yaw_value: float) -> None:
+        """Update yaw value from EEG data (passive control)."""
+        self.current_yaw = yaw_value % 360

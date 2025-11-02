@@ -5,7 +5,7 @@
 #  - Yaw via yaw_head.joblib (left/right)
 # Final label priority: blink > yaw_(confident) > focus/not_focus
 
-import os, time, json
+import os, time, json, sys
 import numpy as np
 from collections import deque
 from typing import Tuple
@@ -116,7 +116,7 @@ def main():
 
     # BrainFlow setup
     BoardShim.enable_dev_board_logger()
-    params=BrainFlowInputParams(); board_id=BoardIds.GANGLION_NATIVE_BOARD.value
+    params=BrainFlowInputParams(); board_id=BoardIds.SYNTHETIC_BOARD.value
     board=BoardShim(board_id,params); board.prepare_session(); board.start_stream()
     sr=BoardShim.get_sampling_rate(board_id); eeg_chs=BoardShim.get_eeg_channels(board_id)
     need=max(int(WINDOW_SEC*sr),256); print(f"EEG OK: {len(eeg_chs)} ch @ {sr} Hz | {eeg_chs}")
@@ -184,6 +184,27 @@ def main():
                 blink_str = f"B[rate0.5={blink_rate:.2f}]"
                 print(f"{final:>10} | {focus_str} {yaw_str} {blink_str}      ", end="\r")
                 eeg_string = f"{final:>10} | {focus_str} {yaw_str} {blink_str}      "
+                # Output JSON-structured data to stderr for easy parsing
+                json_data = {
+                    "final": final,
+                    "focus": {
+                        focus_classes[0]: float(pf[0]),
+                        focus_classes[1]: float(pf[1])
+                    },
+                    "yaw": {
+                        yaw_classes[0]: float(py[0]),
+                        yaw_classes[1]: float(py[1]),
+                        "centered": float(yaw_centered),
+                        "confidence": float(yaw_conf)
+                    },
+                    "blink": {
+                        "rate": float(blink_rate),
+                        "env95": float(blink_env95),
+                        "event": bool(blink_event)
+                    },
+                    "timestamp": now
+                }
+                print(json.dumps(json_data), file=sys.stderr)
                 requests.post(
                     "http://localhost:8000/eeg/ingest",
                     json={"raw_string": eeg_string}, timeout=1

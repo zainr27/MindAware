@@ -164,11 +164,12 @@ def set_latest_drone_command(command: str, reasoning: str = "", metadata: Option
     Maps MindAware commands to partner's drone step names:
     - 'takeoff' → 'TAKEOFF'
     - 'land' → 'LAND'
-    - 'yaw_right' → 'YAW RIGHT'
-    - 'maintain' → 'maintain' (no action)
+    - 'maintain_altitude' → 'maintain' (no action, yaw controlled by EEG)
+    
+    YAW is controlled passively by the EEG (head turning), not by commands.
     
     Args:
-        command: 'takeoff', 'land', 'yaw_right', or 'maintain'
+        command: 'takeoff', 'land', or 'maintain_altitude'
         reasoning: Why this command was chosen
         metadata: Additional context (altitude, cognitive state, etc.)
     """
@@ -178,8 +179,8 @@ def set_latest_drone_command(command: str, reasoning: str = "", metadata: Option
     command_mapping = {
         'takeoff': 'TAKEOFF',
         'land': 'LAND',
-        'yaw_right': 'YAW RIGHT',
-        'maintain': 'maintain'
+        'maintain_altitude': 'maintain',
+        'maintain': 'maintain'  # Backwards compatibility
     }
     
     partner_command = command_mapping.get(command, command)
@@ -198,7 +199,9 @@ async def get_drone_command():
     """
     Get the latest drone command from MindAware.
     
-    Returns partner's exact step names: ["TAKEOFF", "YAW RIGHT", "LAND", "maintain"]
+    Returns partner's exact step names: ["TAKEOFF", "LAND", "maintain"]
+    
+    YAW is controlled passively by the EEG (head turning), not by commands.
     
     Partner's drone code should poll this endpoint every 1-3 seconds:
     
@@ -206,21 +209,23 @@ async def get_drone_command():
     response = requests.get("http://localhost:8000/drone/command")
     data = response.json()
     
-    # data['command'] will be exact step name: "TAKEOFF", "LAND", or "YAW RIGHT"
+    # data['command'] will be exact step name: "TAKEOFF" or "LAND"
     if data['command'] == 'TAKEOFF':
         drone.execute_step('TAKEOFF')
     elif data['command'] == 'LAND':
         drone.execute_step('LAND')
-    elif data['command'] == 'YAW RIGHT':
-        drone.execute_step('YAW RIGHT')
-    # 'maintain' = do nothing
+    # 'maintain' = do nothing (altitude maintained, yaw controlled by EEG)
+    
+    time.sleep(0.1)
     ```
     
     Returns:
-        command: Partner's exact step name ('TAKEOFF', 'LAND', 'YAW RIGHT', or 'maintain')
-        mindaware_command: Our internal command name ('takeoff', 'land', 'yaw_right')
+        command: Partner's exact step name ('TAKEOFF', 'LAND', or 'maintain')
+        mindaware_command: Our internal command name ('takeoff', 'land', 'maintain_altitude')
         reasoning: Why this command was chosen
         timestamp: When the command was issued
+        
+    Note: YAW is controlled passively by the EEG (head turning), not returned here.
     """
     global _latest_drone_command
     

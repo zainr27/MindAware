@@ -52,6 +52,23 @@ class VoiceConfirmer:
         except Exception as e:
             print(f"[VOICE] Error during announcement: {e}")
     
+    def announce_status(self, status_message: str):
+        """
+        Announce a status message to the pilot (no confirmation needed).
+        Used for informational messages like "grounded" or "in the air".
+        
+        Args:
+            status_message: The message to speak
+        """
+        if not self.enabled:
+            return
+        
+        try:
+            print(f"[VOICE] Status: {status_message}")
+            self._speak(status_message)
+        except Exception as e:
+            print(f"[VOICE] Error during status announcement: {e}")
+    
     def ask_confirmation(self, action: str, context: dict) -> bool:
         """
         Ask user for voice confirmation.
