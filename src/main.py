@@ -25,7 +25,7 @@ from src.api import setup_websocket_routes, broadcast_cognitive_state, broadcast
 class MindAwareAgent:
     """Main agent orchestrator."""
     
-    def __init__(self, scenario: str = "normal", use_llm: bool = True, use_real_eeg: bool = False):
+    def __init__(self, scenario: str = "normal", use_llm: bool = True, use_real_eeg: bool = False, drone_base_url: str = None):
         """
         Initialize the agent system.
         
@@ -33,12 +33,13 @@ class MindAwareAgent:
             scenario: EEG simulation scenario (if not using real EEG)
             use_llm: Whether to use LLM reasoning (default: True, requires API key)
             use_real_eeg: Whether to use real EEG hardware (via API ingestion)
+            drone_base_url: Base URL for drone control API (optional, can also use DRONE_BASE_URL env var)
         """
         print("[INIT] Initializing MindAware Agent...")
         
         # Core components
         self.policy = CognitivePolicy()
-        self.tools = DroneTools()
+        self.tools = DroneTools(drone_base_url=drone_base_url)
         self.logger = DecisionLogger()
         self.memory = AgentMemory()
         self.use_llm = use_llm
@@ -167,11 +168,46 @@ class MindAwareAgent:
                 is_urgent = rec.get("urgent", False)
                 needs_confirmation = True
                 
-                # Check voice confirmation before executing
-                if self.voice_confirmer and self.voice_confirmer.enabled:
+                # CRITICAL: Landing ALWAYS requires confirmation (safety-critical)
+                if action == 'land':
+                    if self.voice_confirmer and self.voice_confirmer.enabled:
+                        print(f"[VOICE] 🔴 SAFETY: Landing requires confirmation")
+                        confirmed = self.voice_confirmer.ask_confirmation(
+                            action=action,
+                            context=cognitive_state
+                        )
+                        if not confirmed:
+                            print(f"[VOICE] ❌ User denied {action}")
+                            actions_taken.append({
+                                "tool": action,
+                                "arguments": rec.get("parameters", {}),
+                                "result": {"cancelled": True, "reason": "User denied via voice"},
+                                "reason": rec["reason"],
+                                "voice_confirmed": False
+                            })
+                            continue  # Skip executing landing action
+                        print(f"[VOICE] ✅ User confirmed {action}")
+                        needs_confirmation = True
+                    else:
+                        # Voice disabled - still require explicit confirmation
+                        print(f"\n🔴 ⚠️  WARNING: Low focus detected - Landing requested")
+                        print(f"   Voice confirmation disabled. Would land drone.")
+                        print(f"   To enable voice confirmation: set VOICE_CONFIRMATION_ENABLED=true in .env")
+                        # Don't execute without confirmation
+                        actions_taken.append({
+                            "tool": action,
+                            "arguments": rec.get("parameters", {}),
+                            "result": {"cancelled": True, "reason": "Voice confirmation disabled - landing blocked for safety"},
+                            "reason": rec["reason"],
+                            "voice_confirmed": False
+                        })
+                        continue  # Skip executing landing action when voice is disabled
+                
+                # Check voice confirmation for other actions
+                elif self.voice_confirmer and self.voice_confirmer.enabled:
                     if is_urgent:
                         print(f"[VOICE] Bypassing confirmation for urgent action: {action}")
-                        needs_confirmation = True  # Execute urgent actions
+                        needs_confirmation = True  # Execute urgent actions (like takeoff)
                     else:
                         print(f"[VOICE] Requesting confirmation for: {action}")
                         confirmed = self.voice_confirmer.ask_confirmation(
@@ -266,13 +302,40 @@ class MindAwareAgent:
             tool_name = action.get('tool', '')
             is_urgent = action.get('result', {}).get('urgent', False)
             
-            # Urgent actions (like emergency landing) bypass confirmation
+            # CRITICAL: Landing ALWAYS requires confirmation (safety-critical)
+            if tool_name == 'land':
+                if self.voice_confirmer and self.voice_confirmer.enabled:
+                    print(f"[VOICE] 🔴 SAFETY: Landing requires confirmation")
+                    confirmed = self.voice_confirmer.ask_confirmation(
+                        action=tool_name,
+                        context=cognitive_state
+                    )
+                    
+                    if confirmed:
+                        print(f"[VOICE] ✅ User confirmed {tool_name}")
+                        action['voice_confirmed'] = True
+                        confirmed_actions.append(action)
+                    else:
+                        print(f"[VOICE] ❌ User denied {tool_name}")
+                        action['voice_confirmed'] = False
+                        action['result'] = {"cancelled": True, "reason": "User denied via voice"}
+                        # Still add to list for logging, but mark as cancelled
+                        confirmed_actions.append(action)
+                else:
+                    # Voice disabled - block landing for safety
+                    print(f"[VOICE] 🔴 ⚠️  Landing blocked: Voice confirmation disabled")
+                    action['voice_confirmed'] = False
+                    action['result'] = {"cancelled": True, "reason": "Voice confirmation disabled - landing blocked for safety"}
+                    confirmed_actions.append(action)
+                continue
+            
+            # Urgent actions (like takeoff) can bypass confirmation
             if is_urgent:
                 print(f"[VOICE] Bypassing confirmation for urgent action: {tool_name}")
                 confirmed_actions.append(action)
                 continue
             
-            # Request confirmation for all non-urgent actions
+            # Request confirmation for all other non-urgent actions
             print(f"[VOICE] Requesting confirmation for: {tool_name}")
             
             confirmed = self.voice_confirmer.ask_confirmation(
@@ -527,6 +590,10 @@ def main():
                        help="Skip simulation (for API-only mode)")
     parser.add_argument("--api-port", type=int, default=8000,
                        help="Port for API server (default: 8000)")
+    parser.add_argument("--drone-url", type=str, default=None,
+                       help="Base URL for drone control API (e.g., http://192.168.86.139:8080). "
+                            "Can also set DRONE_BASE_URL environment variable. "
+                            "Defaults to http://192.168.86.139:8080")
     
     args = parser.parse_args()
     
@@ -546,7 +613,8 @@ def main():
         agent = MindAwareAgent(
             scenario=args.scenario, 
             use_llm=use_llm,
-            use_real_eeg=args.real_eeg
+            use_real_eeg=args.real_eeg,
+            drone_base_url=args.drone_url
         )
     except ValueError as e:
         print(f"\n❌ Error initializing agent: {e}")
@@ -554,7 +622,8 @@ def main():
         agent = MindAwareAgent(
             scenario=args.scenario, 
             use_llm=False,
-            use_real_eeg=args.real_eeg
+            use_real_eeg=args.real_eeg,
+            drone_base_url=args.drone_url
         )
     
     # Start API server in background thread (for real EEG mode or API-only mode)
