@@ -116,7 +116,7 @@ def main():
 
     # BrainFlow setup
     BoardShim.enable_dev_board_logger()
-    params=BrainFlowInputParams(); board_id=BoardIds.SYNTHETIC_BOARD.value
+    params=BrainFlowInputParams(); board_id=BoardIds.GANGLION_NATIVE_BOARD.value
     board=BoardShim(board_id,params); board.prepare_session(); board.start_stream()
     sr=BoardShim.get_sampling_rate(board_id); eeg_chs=BoardShim.get_eeg_channels(board_id)
     need=max(int(WINDOW_SEC*sr),256); print(f"EEG OK: {len(eeg_chs)} ch @ {sr} Hz | {eeg_chs}")
