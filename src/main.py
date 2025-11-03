@@ -77,7 +77,7 @@ class MindAwareAgent:
             print("[INIT] 🔴 Real EEG mode enabled - waiting for data from hardware")
             print("[INIT] Partner should POST to /eeg/ingest endpoint")
         else:
-        self.eeg_sim = EEGSimulator(scenario=scenario)
+            self.eeg_sim = EEGSimulator(scenario=scenario)
             print(f"[INIT] EEG simulator: {scenario} scenario")
         
         # Drone simulator
@@ -656,10 +656,10 @@ def main():
             agent.run_real_eeg_loop(interval=args.interval)
         else:
             # Simulation mode: fixed iterations
-        agent.run_simulation_loop(
-            iterations=args.iterations,
-            interval=args.interval
-        )
+            agent.run_simulation_loop(
+                iterations=args.iterations,
+                interval=args.interval
+            )
     else:
         print("\n[INFO] Simulation skipped. Agent ready for API requests.")
         print("[INFO] Use POST /agent endpoint to process cognitive states.")

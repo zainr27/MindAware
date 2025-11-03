@@ -86,7 +86,7 @@ class CognitivePolicy:
                 severity = "grounded"  # Special status
             else:
                 # In air → LAND immediately (low focus)
-            recommendations.append({
+                recommendations.append({
                     "action": "land",
                     "reason": "Low focus detected - operator needs to regain concentration",
                     "parameters": {},
